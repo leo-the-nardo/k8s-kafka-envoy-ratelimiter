@@ -85,6 +85,16 @@ descriptors:
 > [!NOTE]
 > The rate limiting logic applies if **any** of the defined rules are met. For example, if a specific `user_id` exceeds 40 req/s, the request is blocked even if the `tenant_id` limit has not been reached, and vice-versa.
 
+## Latency Overhead
+```
+===== Envoy RateLimitService gRPC latency (client-side, µs, includes redis elasticache latency) =====
+Samples : 150.000
+Min     : 320 µs (0.3ms)
+P90     : 620 µs (0.6ms)
+P99     : 710 µs (0.7ms)
+Max     : 1840 µs (1.8ms)
+===============================================================
+```
 ## Dependencies
 Key libraries used for Envoy integration and gRPC communication include:
 
