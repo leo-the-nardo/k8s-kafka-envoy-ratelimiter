@@ -1,5 +1,5 @@
 # Using Envoy Distributed Ratelimiter as Kafka Middleware
-<img alt="kafka-envoy-ratelimit-architecture" src="https://github.com/user-attachments/assets/0b5753f8-032a-45c3-b7d1-ebf5791528b2" />
+<img alt="kafka-ratelimiter-sidecar" src="https://github.com/user-attachments/assets/f2c47d77-ae3d-4e0e-aa54-601382a9cc5c" />
 
 
 ## Rate Limiting Logic
