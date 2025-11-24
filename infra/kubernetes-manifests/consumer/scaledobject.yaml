@@ -12,7 +12,7 @@ spec:
     - type: kafka
       metadata:
         bootstrapServers: my-cluster-kafka-bootstrap:9092
-        consumerGroup: kafka-router-group
+        consumerGroup: kafka-consumer-group
         topic: input-topic
         lagThreshold: "50"
   advanced:

@@ -10,16 +10,16 @@ import org.springframework.kafka.core.KafkaTemplate
 import org.springframework.stereotype.Service
 
 @Service
-class KafkaRouter(
+class KafkaConsumer(
     private val rateLimitClient: RateLimitClient,
-    private val kafkaTemplate: KafkaTemplate<String, UserRequest>
+    private val kafka: kafka<String, UserRequest>
 ) {
 
-    private val logger = LoggerFactory.getLogger(KafkaRouter::class.java)
+    private val logger = LoggerFactory.getLogger(KafkaConsumer::class.java)
     private val validTopic = "valid-topic"
     private val refusedTopic = "refused-topic"
 
-    @KafkaListener(topics = ["input-topic"], groupId = "kafka-router-group")
+    @KafkaListener(topics = ["input-topic"], groupId = "kafka-consumer-group")
     fun listen(requests: List<UserRequest>) = runBlocking {
         logger.info("Received batch of ${requests.size} requests")
         
@@ -36,10 +36,10 @@ class KafkaRouter(
 
         if (rateLimitClient.shouldRateLimit(tenantId, userId)) {
             logger.info("Rate limit exceeded for user $userId in tenant $tenantId. Routing to refused topic.")
-            kafkaTemplate.send(refusedTopic, request)
-        } else {
-            logger.info("Request valid for user $userId in tenant $tenantId. Routing to valid topic.")
-            kafkaTemplate.send(validTopic, request)
+            kafka.send(refusedTopic, request)
+            return
         }
+        logger.info("Request valid for user $userId in tenant $tenantId. Routing to valid topic.")
+        kafka.send(validTopic, request)
     }
 }
