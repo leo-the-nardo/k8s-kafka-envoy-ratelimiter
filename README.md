@@ -1,6 +1,6 @@
 # Using Envoy Distributed Ratelimiter as Kafka Middleware
+This is the Kafka-Middleware version of [k8s-gateway-api-envoy-ratelimit](https://github.com/leo-the-nardo/k8s-gateway-api-envoy-ratelimit)
 <img alt="kafka-ratelimiter-sidecar" src="https://github.com/user-attachments/assets/f2c47d77-ae3d-4e0e-aa54-601382a9cc5c" />
-
 
 ## Rate Limiting Logic
 The core rate limiting logic resides in the `shouldRateLimit` function within `RateLimitClient.kt`. It utilizes **gRPC** to communicate with the Envoy Rate Limit Sidecar.
