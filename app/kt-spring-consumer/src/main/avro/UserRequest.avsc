@@ -1,0 +1,10 @@
+{
+  "namespace": "com.example.consumer.avro",
+  "type": "record",
+  "name": "UserRequest",
+  "fields": [
+    {"name": "tenantId", "type": "string"},
+    {"name": "userId", "type": "string"},
+    {"name": "payload", "type": "string"}
+  ]
+}

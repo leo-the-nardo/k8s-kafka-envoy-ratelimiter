@@ -1,0 +1,33 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kt-consumer
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kt-consumer
+  template:
+    metadata:
+      labels:
+        app: kt-consumer
+    spec:
+      containers:
+        - name: kt-consumer
+          image: kafka-consumer:latest
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: KAFKA_BROKERS
+              value: my-cluster-kafka-bootstrap:9092
+            - name: RATELIMIT_SERVICE_URL
+              value: ratelimit-service:8081
+          ports:
+            - containerPort: 8080
+          resources:
+            requests:
+              cpu: 500m
+              memory: 512Mi
+            limits:
+              cpu: 1000m
+              memory: 1Gi

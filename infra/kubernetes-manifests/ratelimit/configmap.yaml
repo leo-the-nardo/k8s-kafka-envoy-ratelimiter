@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ratelimit-config
+  namespace: default
+data:
+  config.yaml: |
+    domain: kafka-consumer
+    descriptors:
+      - key: tenant_id
+        rate_limit:
+          unit: second
+          requests_per_unit: 40
+      - key: user_id
+        rate_limit:
+          unit: second
+          requests_per_unit: 40
