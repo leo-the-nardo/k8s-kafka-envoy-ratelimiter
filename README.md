@@ -3,7 +3,7 @@
 
 
 ## Rate Limiting Logic
-The core rate limiting logic resides in the `shouldRateLimit` function within `RateLimitClient.kt`. It utilizes **gRPC** to communicate with the Envoy Rate Limit Service.
+The core rate limiting logic resides in the `shouldRateLimit` function within `RateLimitClient.kt`. It utilizes **gRPC** to communicate with the Envoy Rate Limit Sidecar.
 
 ```kotlin
 suspend fun shouldRateLimit(tenantId: String, userId: String): Boolean {
@@ -65,7 +65,8 @@ private suspend fun processRequest(request: UserRequest) {
 - **Fail-Open Policy**: The client implements a **20ms timeout**. If the service is unreachable or times out, the system fails open (allows the request) to ensure consumer throughput is not blocked.
 
 ## Deployment & Configuration
-- **Service**: The `ratelimit-service` is deployed using the `envoyproxy/ratelimit:v1.5.0` image.
+- **Architecture**: The `ratelimit-service` is deployed as a **sidecar container** within the Kafka consumer pod. This architecture enables **ultra-low latency** communication via **gRPC over localhost**, maximizing throughput and performance.
+- **Service**: The sidecar uses the `envoyproxy/ratelimit` image.
 - **Configuration**: The `ratelimit-config` ConfigMap defines the rules, currently set to **40 requests per second** for both `tenant_id` and `user_id`.
 
 ```yaml
@@ -81,6 +82,9 @@ descriptors:
       requests_per_unit: 40
 ```
 
+> [!NOTE]
+> The rate limiting logic applies if **any** of the defined rules are met. For example, if a specific `user_id` exceeds 40 req/s, the request is blocked even if the `tenant_id` limit has not been reached, and vice-versa.
+
 ## Dependencies
 Key libraries used for Envoy integration and gRPC communication include:
 
@@ -92,3 +96,6 @@ dependencies {
     implementation("io.grpc:grpc-protobuf:1.58.0")
 }
 ```
+
+## Acknowledgments
+- [envoyproxy/ratelimit](https://github.com/envoyproxy/ratelimit) - The rate limit service container used on this project.
