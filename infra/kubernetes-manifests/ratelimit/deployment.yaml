@@ -15,15 +15,24 @@ spec:
     spec:
       containers:
         - name: ratelimit
-          image: envoyproxy/ratelimit:v1.5.0
+          image: envoyproxy/ratelimit:99d85510
           command: ["/bin/ratelimit"]
           env:
+            - name: REDIS_TLS
+              value: "true"
+            - name: REDIS_TLS_SKIP_HOSTNAME_VERIFICATION
+              value: "true"
+            - name: REDIS_AUTH
+              valueFrom:
+                secretKeyRef:
+                  name: ratelimit-redis-creds
+                  key: REDIS_PASSWORD
             - name: LOG_LEVEL
               value: debug
             - name: REDIS_SOCKET_TYPE
               value: tcp
             - name: REDIS_URL
-              value: redis-master:6379
+              value: envoy-ratelimit-redis-pr7hih.serverless.use1.cache.amazonaws.com:6379
             - name: USE_STATSD
               value: "false"
             - name: RUNTIME_ROOT
@@ -66,3 +75,41 @@ spec:
     - port: 8080
       targetPort: 8080
       name: http-admin
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ratelimit-config
+  namespace: default
+data:
+  config.yaml: |
+    domain: kafka-consumer
+    descriptors:
+      - key: tenant_id
+        rate_limit:
+          unit: second
+          requests_per_unit: 40
+      - key: user_id
+        rate_limit:
+          unit: second
+          requests_per_unit: 40
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: ratelimit-hpa
+  namespace: default
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: ratelimit-service
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
