@@ -6,80 +6,70 @@
 The core rate limiting logic resides in the `shouldRateLimit` function within `RateLimitClient.kt`. It utilizes **gRPC** to communicate with the Envoy Rate Limit Sidecar.
 
 ```kotlin
-suspend fun shouldRateLimit(tenantId: String, userId: String): Boolean {
-    val request = RateLimitRequest.newBuilder()
-        .setDomain("kafka-consumer")
-        .addDescriptors(
-            io.envoyproxy.envoy.extensions.common.ratelimit.v3.RateLimitDescriptor.newBuilder()
-                .addEntries(
-                    io.envoyproxy.envoy.extensions.common.ratelimit.v3.RateLimitDescriptor.Entry.newBuilder()
-                        .setKey("tenant_id")
-                        .setValue(tenantId)
-                        .build()
-                )
-                .addEntries(
-                    io.envoyproxy.envoy.extensions.common.ratelimit.v3.RateLimitDescriptor.Entry.newBuilder()
-                        .setKey("user_id")
-                        .setValue(userId)
-                        .build()
-                )
-                .build()
-        )
-        .setHitsAddend(1)
-        .build()
+    suspend fun shouldRateLimit(key: String): RateLimitResult {
+        return try {
+            val requestBuilder = RateLimitRequest.newBuilder()
+                .setDomain("spring")
+                .setHitsAddend(1)
 
-    return try {
-        // 20ms timeout
-        val response = futureStub
-            .withDeadlineAfter(20, TimeUnit.MILLISECONDS)
-            .shouldRateLimit(request)
-            .await() // Non-blocking await
-        
-        response.overallCode == RateLimitResponse.Code.OVER_LIMIT
-    } catch (e: Exception) {
-        logger.warn("Rate Limit Service error or timeout. Failing open.", e)
-        false // Fail open
+            if (incrementSilver) {
+                val silverDescriptor = RateLimitDescriptor.newBuilder()
+                    .addEntries(RateLimitDescriptor.Entry.newBuilder().setKey("silver_filter").setValue(key))
+                    .build()
+                requestBuilder.addDescriptors(silverDescriptor)
+            }
+
+            if (incrementGold) {
+                val goldDescriptor = RateLimitDescriptor.newBuilder()
+                    .addEntries(RateLimitDescriptor.Entry.newBuilder().setKey("gold_filter").setValue(key))
+                    .build()
+                requestBuilder.addDescriptors(goldDescriptor)
+            }
+
+            val request = requestBuilder.build()
+
+            val response = kotlinx.coroutines.withTimeout(timeout) {
+                stub.shouldRateLimit(request)
+            }
+            
+            // Logic to determine if rate limited based on response statuses
+            // ...
+        } catch (e: Exception) {
+            // Fail open logic
+        }
     }
-}
 ```
 
 ### Usage
-The `shouldRateLimit` function is used within the Kafka consumer flow to validate requests before processing.
+The `shouldRateLimit` function is used to validate requests against multiple descriptors (`silver_filter`, `gold_filter`).
 
-```kotlin
-private suspend fun processRequest(request: UserRequest) {
-    val tenantId = request.getTenantId().toString()
-    val userId = request.getUserId().toString()
-
-    if (rateLimitClient.shouldRateLimit(tenantId, userId)) {
-        logger.info("Rate limit exceeded for user $userId in tenant $tenantId. Routing to refused topic.")
-        kafka.send(refusedTopic, request)
-        return
-    }
-    logger.info("Request valid for user $userId in tenant $tenantId. Routing to valid topic.")
-    kafka.send(validTopic, request)
-}
-```
-
-- **Request Structure**: The request targets the `kafka-consumer` domain with descriptors for `tenant_id` and `user_id`.
-- **Fail-Open Policy**: The client implements a **20ms timeout**. If the service is unreachable or times out, the system fails open (allows the request) to ensure consumer throughput is not blocked.
+- **Request Structure**: The request targets the `spring` domain with descriptors for `silver_filter` and `gold_filter`.
+- **Fail-Open Policy**: The client implements a timeout. If the service is unreachable or times out, the system fails open.
 
 ## Deployment & Configuration
-- **Architecture**: The `ratelimit-service` is deployed as a **sidecar container** within the Kafka consumer pod. This architecture enables **ultra-low latency** communication via **gRPC over localhost**, maximizing throughput and performance.
-- **Service**: The sidecar uses the `envoyproxy/ratelimit` image.
-- **Configuration**: The `ratelimit-config` ConfigMap defines the rules, currently set to **40 requests per second** for both `tenant_id` and `user_id`.
+- **Architecture**: The `ratelimit-service` is deployed as a **sidecar container** within the Kafka consumer pod.
+- **Configuration**: The `ratelimit-config` ConfigMap defines the rules.
 
 ```yaml
-domain: kafka-consumer
+domain: spring
+
 descriptors:
-  - key: tenant_id
+
+  # 60 tps (ENFORCED)
+  - key: gold_filter
+    detailed_metric: true
+    rate_limit:
+      unit: second
+      requests_per_unit: 60
+    
+  # Global per-user bucket: 40 tps (shared between App A and App B)
+  # Here it is SHADOWED for App A, so it never blocks.
+  - key: silver_filter
+    detailed_metric: true
     rate_limit:
       unit: second
       requests_per_unit: 40
-  - key: user_id
-    rate_limit:
-      unit: second
-      requests_per_unit: 40
+    shadow_mode: true
 ```
 
 > [!NOTE]
@@ -90,11 +80,51 @@ Key libraries used for Envoy integration and gRPC communication include:
 
 ```kotlin
 dependencies {
-    implementation("io.envoyproxy.controlplane:api:0.1.35")
-    implementation("net.devh:grpc-client-spring-boot-starter:2.15.0.RELEASE")
-    implementation("io.grpc:grpc-stub:1.58.0")
-    implementation("io.grpc:grpc-protobuf:1.58.0")
+    implementation("io.grpc:grpc-kotlin-stub:1.4.1")
+    implementation("io.grpc:grpc-netty:1.64.0")
+    implementation("io.grpc:grpc-protobuf:1.64.0")
+    implementation("com.google.protobuf:protobuf-kotlin:4.27.0")
 }
+```
+
+## Performance
+**Throughput**: 3000 TPS
+**ECPUS**: ~7.5K
+
+**Latency (p99)**:
+- **Total**: 4~4.5ms
+- **Kotlin**: 4~4.5ms
+- **Envoy**: 2-3ms
+- **Redis**: 0.8-1.3ms
+
+**Latency (Avg)**:
+- **Total**: 2.5ms
+- **Kotlin**: 2.5ms
+- **Envoy**: 1.4ms
+- **Redis**: 0.9ms
+
+**Resource Usage**:
+- **Resource Definitions**:
+    - Kotlin: 0.6 CPU * 3 Pods
+    - Envoy: 1.5 CPU * 1 Pod (or 0.5 CPU * 3 Pods)
+
+**Reliability**:
+- **Max Excess**: 0.1% during 10min 3000 TPS test.
+    - *Note*: 0.1% is (excess requests) / (excess requests + denied requests). It represents the percentage of requests that should have been denied but were not.
+- **Bursts**: No excesses in bursts (0 to 3000 TPS very fast).
+
+## Infrastructure & Configuration
+The project uses **AWS AppConfig** for dynamic configuration management, allowing rate limit rules to be updated without redeploying the service.
+
+### Envoy Deployment Resources (Kubernetes)
+```yaml
+          resources:
+            requests:
+              cpu: "1500m"
+              memory: "0.5Gi"
+            limits:
+              cpu: "1500m"
+              memory: "1Gi"
 ```
 
 ## Acknowledgments

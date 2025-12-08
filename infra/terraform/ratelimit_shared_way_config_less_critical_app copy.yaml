@@ -1,0 +1,16 @@
+#shared way = App A and App B share the same per-user bucket but one refuses on 40tps and the other on 60tps
+# one have shadow rules (to increment the counter also) and the other have the enforcement limit
+# Scenario: App B can be blocked by requests of app A but App A can't be blocked by requests of app B
+domain: spring
+
+descriptors:
+  - key: silver_filter
+    rate_limit:
+      unit: second
+      requests_per_unit: 40
+
+  - key: gold_filter
+    rate_limit:
+      unit: second
+      requests_per_unit: 60
+    

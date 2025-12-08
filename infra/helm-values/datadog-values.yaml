@@ -1,0 +1,66 @@
+#helm repo add datadog https://helm.datadoghq.com
+#helm repo update
+#kubectl create secret generic datadog-secret --from-literal api-key=<DATADOG_API_KEY>
+#helm install datadog-agent -f datadog-values.yaml datadog/datadog
+registry: public.ecr.aws/datadog
+datadog:
+  logLevel: debug
+  clusterName: "dev-eks-cluster" 
+  site: "datadoghq.com"
+  apiKeyExistingSecret: "datadog-secret"
+  otelCollector:
+    enabled: true
+    ports:
+      - containerPort: 4317
+        hostPort: 4317
+        name: "otel-grpc"
+      - containerPort: 4318
+        hostPort: 4318
+        name: "otel-http"
+  apm:
+    instrumentation:
+      enabled: false
+  logs:
+    enabled: true
+    containerCollectAll: false  
+clusterAgent:
+  tokenExistingSecret: datadog-secret
+  replicas: 2
+  admissionController:
+    enabled: true
+    mutateUnlabelled: false
+    agentSidecarInjection:
+      enabled: true
+      provider: fargate
+      profiles:
+        - env:
+            # OTLP receiver for traces/metrics
+            - name: DD_OTLP_CONFIG_RECEIVER_PROTOCOLS_GRPC_ENDPOINT
+              value: "0.0.0.0:4317"
+            - name: DD_OTLP_CONFIG_RECEIVER_PROTOCOLS_HTTP_ENDPOINT
+              value: "0.0.0.0:4318"
+            # Route OTLP traces to Datadog (not to another OTLP endpoint)
+            - name: DD_OTLP_CONFIG_TRACES_ENABLED
+              value: "true"
+            # DogStatsD (already default, but explicit)
+            - name: DD_DOGSTATSD_PORT
+              value: "8125"
+            - name: DD_DOGSTATSD_NON_LOCAL_TRAFFIC
+              value: "true"
+            # Histogram percentiles for p50, p75, p90, p95, p99
+            - name: DD_HISTOGRAM_PERCENTILES
+              value: "0.50 0.75 0.90 0.95 0.99"
+            - name: DD_HISTOGRAM_AGGREGATES
+              value: "max min avg count sum"
+            # APM - must be enabled to process OTLP traces
+            - name: DD_APM_ENABLED
+              value: "true"
+            - name: DD_APM_RECEIVER_PORT
+              value: "8126"
+            # Logs - on Fargate, must use TCP since no container runtime access
+            - name: DD_LOGS_ENABLED
+              value: "true"
+            - name: DD_LOGS_CONFIG_CONTAINER_COLLECT_ALL
+              value: "false"
+            - name: DD_LOGS_CONFIG_USE_HTTP
+              value: "true"

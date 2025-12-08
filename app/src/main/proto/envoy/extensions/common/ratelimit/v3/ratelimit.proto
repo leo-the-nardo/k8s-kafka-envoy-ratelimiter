@@ -1,0 +1,20 @@
+syntax = "proto3";
+
+package envoy.extensions.common.ratelimit.v3;
+
+option java_package = "io.envoyproxy.envoy.extensions.common.ratelimit.v3";
+option java_outer_classname = "RatelimitProto";
+option java_multiple_files = true;
+option go_package = "github.com/envoyproxy/go-control-plane/envoy/extensions/common/ratelimit/v3;ratelimitv3";
+
+message RateLimitDescriptor {
+  message Entry {
+    string key = 1;
+    string value = 2;
+  }
+
+  repeated Entry entries = 1;
+  
+  // Optional: limit override
+  // RateLimitOverride limit = 2;
+}

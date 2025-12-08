@@ -1,0 +1,323 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: k6-ratelimit-http-over-only-script
+  namespace: envoy-ratelimit
+data:
+  script.js: |
+    import http from 'k6/http';
+    import { check, group } from 'k6';
+    import { scenario } from 'k6/execution';
+    import { Rate, Counter } from 'k6/metrics';
+
+    // -----------------------------------------------------------------------
+    // 1. ENVIRONMENT VARIABLES
+    // -----------------------------------------------------------------------
+    const RATELIMIT_URL = __ENV.RATELIMIT_URL || 'http://envoy-ratelimit.envoy-ratelimit.svc.cluster.local:8080';
+    const DOMAIN = __ENV.DOMAIN || 'test';
+    const DURATION = __ENV.TEST_DURATION || '60s';
+    const LIMIT_PER_USER = parseInt(__ENV.LIMIT_PER_USER || '40');
+
+    // Scenario A: 20 users @ 100 TPS each = 2000 TPS
+    const SCENARIO_A_USERS = 20;
+    const SCENARIO_A_TPS_PER_USER = 100;
+    const SCENARIO_A_TOTAL_TPS = SCENARIO_A_USERS * SCENARIO_A_TPS_PER_USER; // 2000
+    const SCENARIO_A_EXPECTED_RATE_LIMITED = ((SCENARIO_A_TPS_PER_USER - LIMIT_PER_USER) / SCENARIO_A_TPS_PER_USER * 100).toFixed(0); // 60%
+
+    // Scenario B: 2 users @ 1000 TPS each = 2000 TPS  
+    const SCENARIO_B_USERS = 2;
+    const SCENARIO_B_TPS_PER_USER = 1000;
+    const SCENARIO_B_TOTAL_TPS = SCENARIO_B_USERS * SCENARIO_B_TPS_PER_USER; // 2000
+    const SCENARIO_B_EXPECTED_RATE_LIMITED = ((SCENARIO_B_TPS_PER_USER - LIMIT_PER_USER) / SCENARIO_B_TPS_PER_USER * 100).toFixed(0); // 96%
+
+    // Combined total = 4000 TPS
+    const TOTAL_TPS = SCENARIO_A_TOTAL_TPS + SCENARIO_B_TOTAL_TPS;
+
+    // -----------------------------------------------------------------------
+    // 2. METRICS
+    // -----------------------------------------------------------------------
+    // Scenario A metrics
+    const scenarioA_200 = new Counter('A_received_200');
+    const scenarioA_429 = new Counter('A_received_429');
+    const scenarioA_other = new Counter('A_received_other');
+    const scenarioA_rate_429 = new Rate('A_rate_429');
+
+    // Scenario B metrics
+    const scenarioB_200 = new Counter('B_received_200');
+    const scenarioB_429 = new Counter('B_received_429');
+    const scenarioB_other = new Counter('B_received_other');
+    const scenarioB_rate_429 = new Rate('B_rate_429');
+
+    // -----------------------------------------------------------------------
+    // 3. CONFIGURATION
+    // -----------------------------------------------------------------------
+    export const options = {
+      scenarios: {
+        // Scenario A: 20 users @ 100 TPS each = 2000 TPS
+        many_users_low_tps: {
+          executor: 'constant-arrival-rate',
+          exec: 'runScenarioA',
+          rate: SCENARIO_A_TOTAL_TPS,
+          timeUnit: '1s',
+          duration: DURATION,
+          preAllocatedVUs: 100,
+          maxVUs: 400,
+        },
+        // Scenario B: 2 users @ 1000 TPS each = 2000 TPS
+        few_users_high_tps: {
+          executor: 'constant-arrival-rate',
+          exec: 'runScenarioB',
+          rate: SCENARIO_B_TOTAL_TPS,
+          timeUnit: '1s',
+          duration: DURATION,
+          preAllocatedVUs: 100,
+          maxVUs: 400,
+        },
+      },
+      thresholds: {
+        'http_reqs{scenario:many_users_low_tps}': ['count>=0'],
+        'http_reqs{scenario:few_users_high_tps}': ['count>=0'],
+      },
+      summaryTrendStats: ['min', 'avg', 'med', 'max', 'p(90)', 'p(95)', 'p(99)'],
+    };
+
+    // -----------------------------------------------------------------------
+    // 4. DATA SETUP
+    // -----------------------------------------------------------------------
+    export function setup() {
+      // Scenario A: 20 distinct users
+      const pairsA = Array.from({ length: SCENARIO_A_USERS }, (_, i) => ({
+        t: `tenant_A_${i}`,
+        u: `user_A_${i}`
+      }));
+
+      // Scenario B: 2 distinct users
+      const pairsB = Array.from({ length: SCENARIO_B_USERS }, (_, i) => ({
+        t: `tenant_B_${i}`,
+        u: `user_B_${i}`
+      }));
+      
+      console.log(`\n=== TEST CONFIGURATION ===`);
+      console.log(`Scenario A: ${SCENARIO_A_USERS} users @ ${SCENARIO_A_TPS_PER_USER} TPS = ${SCENARIO_A_TOTAL_TPS} TPS (expect ~${SCENARIO_A_EXPECTED_RATE_LIMITED}% rate limited)`);
+      console.log(`Scenario B: ${SCENARIO_B_USERS} users @ ${SCENARIO_B_TPS_PER_USER} TPS = ${SCENARIO_B_TOTAL_TPS} TPS (expect ~${SCENARIO_B_EXPECTED_RATE_LIMITED}% rate limited)`);
+      console.log(`Total: ${TOTAL_TPS} TPS`);
+      console.log(`Limit: ${LIMIT_PER_USER} TPS per user`);
+      console.log(`===========================\n`);
+      
+      return { pairsA, pairsB };
+    }
+
+    // -----------------------------------------------------------------------
+    // 5. HTTP REQUEST TO RATELIMIT SERVICE
+    // -----------------------------------------------------------------------
+    function makeRatelimitRequest(pair) {
+      const payload = JSON.stringify({
+        domain: DOMAIN,
+        hitsAddend: 1,
+        descriptors: [
+          {
+            entries: [
+              { key: 'tenant_id', value: pair.t }
+            ]
+          },
+          {
+            entries: [
+              { key: 'user_id', value: pair.u }
+            ]
+          }
+        ]
+      });
+
+      const params = {
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      };
+
+      const res = http.post(`${RATELIMIT_URL}/json`, payload, params);
+      
+      return { 
+        isOK: res.status === 200,
+        isOverLimit: res.status === 429,
+        status: res.status
+      };
+    }
+
+    // -----------------------------------------------------------------------
+    // 6. EXECUTORS
+    // -----------------------------------------------------------------------
+    export function runScenarioA(data) {
+      const pairIndex = scenario.iterationInTest % data.pairsA.length;
+      const pair = data.pairsA[pairIndex];
+      
+      const result = makeRatelimitRequest(pair);
+      
+      if (result.isOK) scenarioA_200.add(1);
+      else if (result.isOverLimit) scenarioA_429.add(1);
+      else scenarioA_other.add(1);
+      
+      scenarioA_rate_429.add(result.isOverLimit);
+    }
+
+    export function runScenarioB(data) {
+      const pairIndex = scenario.iterationInTest % data.pairsB.length;
+      const pair = data.pairsB[pairIndex];
+      
+      const result = makeRatelimitRequest(pair);
+      
+      if (result.isOK) scenarioB_200.add(1);
+      else if (result.isOverLimit) scenarioB_429.add(1);
+      else scenarioB_other.add(1);
+      
+      scenarioB_rate_429.add(result.isOverLimit);
+    }
+
+    // -----------------------------------------------------------------------
+    // 7. TEARDOWN
+    // -----------------------------------------------------------------------
+    export function teardown(data) {
+      // No-op
+    }
+
+    // -----------------------------------------------------------------------
+    // 8. REPORTING
+    // -----------------------------------------------------------------------
+    export function handleSummary(data) {
+      const duration = data.state.testRunDurationMs / 1000;
+      
+      function getVal(name, field = 'count') {
+        return data.metrics[name] ? data.metrics[name].values[field] : 0;
+      }
+      
+      function fmt(num) {
+        return Math.round(num).toLocaleString();
+      }
+
+      // Scenario A stats
+      const a200 = getVal('A_received_200');
+      const a429 = getVal('A_received_429');
+      const aOther = getVal('A_received_other');
+      const aTotal = a200 + a429 + aOther;
+      const aRate429 = (aTotal > 0) ? (a429 / aTotal * 100) : 0;
+      const aActualRPS = aTotal / duration;
+
+      // Scenario B stats
+      const b200 = getVal('B_received_200');
+      const b429 = getVal('B_received_429');
+      const bOther = getVal('B_received_other');
+      const bTotal = b200 + b429 + bOther;
+      const bRate429 = (bTotal > 0) ? (b429 / bTotal * 100) : 0;
+      const bActualRPS = bTotal / duration;
+
+      // Combined stats
+      const totalReqs = aTotal + bTotal;
+      const totalRPS = totalReqs / duration;
+      const total429 = a429 + b429;
+      const totalRate429 = (totalReqs > 0) ? (total429 / totalReqs * 100) : 0;
+
+      let out = '\n';
+      out += '================================================================================\n';
+      out += '                    DUAL SCENARIO RATE LIMIT TEST\n';
+      out += '================================================================================\n\n';
+
+      out += 'SCENARIO A: Many Users, Low TPS per User\n';
+      out += '-----------------------------------------\n';
+      out += `   Config:          ${SCENARIO_A_USERS} users @ ${SCENARIO_A_TPS_PER_USER} TPS each\n`;
+      out += `   Target TPS:      ${SCENARIO_A_TOTAL_TPS}\n`;
+      out += `   Actual TPS:      ${aActualRPS.toFixed(0)}\n`;
+      out += `   Limit:           ${LIMIT_PER_USER} per user\n`;
+      out += `   Expected:        ~${SCENARIO_A_EXPECTED_RATE_LIMITED}% rate limited\n\n`;
+      out += `   Results:\n`;
+      out += `   - Total:         ${fmt(aTotal)}\n`;
+      out += `   - OK (200):      ${fmt(a200)} (${(a200/aTotal*100).toFixed(2)}%)\n`;
+      out += `   - OVER_LIMIT:    ${fmt(a429)} (${aRate429.toFixed(2)}%)\n`;
+      out += `   - Other:         ${fmt(aOther)}\n`;
+      
+      const aDiff = Math.abs(aRate429 - parseFloat(SCENARIO_A_EXPECTED_RATE_LIMITED));
+      const aPassed = aDiff < 5;
+      out += `\n   STATUS: ${aPassed ? '✅' : '❌'} Expected ~${SCENARIO_A_EXPECTED_RATE_LIMITED}%, got ${aRate429.toFixed(2)}%\n\n`;
+
+      out += 'SCENARIO B: Few Users, High TPS per User\n';
+      out += '-----------------------------------------\n';
+      out += `   Config:          ${SCENARIO_B_USERS} users @ ${SCENARIO_B_TPS_PER_USER} TPS each\n`;
+      out += `   Target TPS:      ${SCENARIO_B_TOTAL_TPS}\n`;
+      out += `   Actual TPS:      ${bActualRPS.toFixed(0)}\n`;
+      out += `   Limit:           ${LIMIT_PER_USER} per user\n`;
+      out += `   Expected:        ~${SCENARIO_B_EXPECTED_RATE_LIMITED}% rate limited\n\n`;
+      out += `   Results:\n`;
+      out += `   - Total:         ${fmt(bTotal)}\n`;
+      out += `   - OK (200):      ${fmt(b200)} (${(b200/bTotal*100).toFixed(2)}%)\n`;
+      out += `   - OVER_LIMIT:    ${fmt(b429)} (${bRate429.toFixed(2)}%)\n`;
+      out += `   - Other:         ${fmt(bOther)}\n`;
+      
+      const bDiff = Math.abs(bRate429 - parseFloat(SCENARIO_B_EXPECTED_RATE_LIMITED));
+      const bPassed = bDiff < 5;
+      out += `\n   STATUS: ${bPassed ? '✅' : '❌'} Expected ~${SCENARIO_B_EXPECTED_RATE_LIMITED}%, got ${bRate429.toFixed(2)}%\n\n`;
+
+      out += 'COMBINED TOTALS\n';
+      out += '---------------\n';
+      out += `   Total Requests:  ${fmt(totalReqs)}\n`;
+      out += `   Total RPS:       ${totalRPS.toFixed(0)} (target: ${TOTAL_TPS})\n`;
+      out += `   Total OVER_LIMIT: ${fmt(total429)} (${totalRate429.toFixed(2)}%)\n`;
+      out += `   Duration:        ${duration.toFixed(1)}s\n\n`;
+
+      out += 'PERFORMANCE\n';
+      out += '-----------\n';
+      const httpDuration = data.metrics.http_req_duration;
+      if (httpDuration && httpDuration.values) {
+        out += `   Average Latency: ${httpDuration.values.avg.toFixed(2)} ms\n`;
+        out += `   P95 Latency:     ${httpDuration.values['p(95)'].toFixed(2)} ms\n`;
+        out += `   P99 Latency:     ${httpDuration.values['p(99)'].toFixed(2)} ms\n`;
+        out += `   Max Latency:     ${httpDuration.values.max.toFixed(2)} ms\n`;
+      }
+      
+      out += '\n================================================================================\n';
+      out += `OVERALL: ${aPassed && bPassed ? '✅ ALL SCENARIOS PASSED' : '❌ SOME SCENARIOS FAILED'}\n`;
+      out += '================================================================================\n';
+
+      return {
+        'stdout': out,
+      };
+    }
+
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: k6-ratelimit-http-over-only
+  namespace: envoy-ratelimit
+spec:
+  template:
+    metadata:
+      labels:
+        app: k6-ratelimit-http-over-only
+    spec:
+      containers:
+      - name: k6
+        image: grafana/k6:latest
+        command: ["k6", "run", "/scripts/script.js"]
+        env:
+          - name: RATELIMIT_URL
+            value: "http://envoy-ratelimit.envoy-ratelimit.svc.cluster.local:8080"
+          - name: DOMAIN
+            value: "test"
+          - name: TEST_DURATION
+            value: "600s"
+          - name: LIMIT_PER_USER
+            value: "40"
+        volumeMounts:
+        - name: script-vol
+          mountPath: /scripts
+        resources:
+          requests:
+            cpu: "1700m"
+            memory: "512Mi"
+          limits:
+            cpu: "1700m"
+            memory: "1.5Gi"
+      restartPolicy: Never
+      volumes:
+      - name: script-vol
+        configMap:
+          name: k6-ratelimit-http-over-only-script
+  backoffLimit: 0

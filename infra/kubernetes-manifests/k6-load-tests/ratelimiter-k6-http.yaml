@@ -1,0 +1,572 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: k6-ratelimit-http-script
+  namespace: envoy-ratelimit
+data:
+  script.js: |
+    import http from 'k6/http';
+    import { check, fail, group } from 'k6';
+    import { scenario } from 'k6/execution';
+    import { Rate, Counter } from 'k6/metrics';
+
+    // -----------------------------------------------------------------------
+    // 1. ENVIRONMENT VARIABLES
+    // -----------------------------------------------------------------------
+    const RATELIMIT_URL = __ENV.RATELIMIT_URL || 'http://envoy-ratelimit.envoy-ratelimit.svc.cluster.local:8080';
+    const DOMAIN = __ENV.DOMAIN || 'test';
+    const DURATION = __ENV.TEST_DURATION || '45s';
+    
+    // Rate limits from config: tenant_id=40/s, user_id=40/s, test_key=10/min
+    const TENANT_LIMIT = parseInt(__ENV.TENANT_LIMIT || '40');
+    const USER_LIMIT = parseInt(__ENV.USER_LIMIT || '40');
+    
+    // Expected Drop Rates
+    const EXPECTED_B = parseFloat(__ENV.EXPECTED_DROP_RATE_B || '0.1111'); // ~11.11%
+    const EXPECTED_E = parseFloat(__ENV.EXPECTED_DROP_RATE_E || '0.0909'); // ~9.09%
+    const EXPECTED_F = parseFloat(__ENV.EXPECTED_DROP_RATE_F || '0.0909'); // ~9.09%
+
+    // -----------------------------------------------------------------------
+    // 2. METRICS
+    // -----------------------------------------------------------------------
+    // Scenario A: Unique 200 OK (25 pairs @ 38 RPS = 950 total)
+    const scenarioA_200 = new Counter('A_received_200');
+    const scenarioA_429 = new Counter('A_received_429');
+    const scenarioA_other = new Counter('A_received_other');
+    
+    // Scenario B: Unique 429 (40 pairs @ 45 RPS = 1800 total, ~11% rate limited)
+    const scenarioB_200 = new Counter('B_received_200');
+    const scenarioB_429 = new Counter('B_received_429');
+    const scenarioB_other = new Counter('B_received_other');
+    const rate429_B = new Rate('B_rate_429');
+    
+    // Scenario C: Shared Low 200 OK (19 users @ 2 RPS = 38 total)
+    const scenarioC_200 = new Counter('C_received_200');
+    const scenarioC_429 = new Counter('C_received_429');
+    const scenarioC_other = new Counter('C_received_other');
+    
+    // Scenario D: Shared High 200 OK (2 users @ 19 RPS = 38 total)
+    const scenarioD_200 = new Counter('D_received_200');
+    const scenarioD_429 = new Counter('D_received_429');
+    const scenarioD_other = new Counter('D_received_other');
+    
+    // Scenario E: Shared Low 429 (11 users @ 4 RPS = 44 total, ~9% rate limited)
+    const scenarioE_200 = new Counter('E_received_200');
+    const scenarioE_429 = new Counter('E_received_429');
+    const scenarioE_other = new Counter('E_received_other');
+    const rate429_E = new Rate('E_rate_429');
+    
+    // Scenario F: Shared High 429 (4 users @ 11 RPS = 44 total, ~9% rate limited)
+    const scenarioF_200 = new Counter('F_received_200');
+    const scenarioF_429 = new Counter('F_received_429');
+    const scenarioF_other = new Counter('F_received_other');
+    const rate429_F = new Rate('F_rate_429');
+
+    // Scenario G: DEBUG - Single tenant at 100 RPS (limit is 40, expect ~60% rate limited)
+    const scenarioG_200 = new Counter('G_received_200');
+    const scenarioG_429 = new Counter('G_received_429');
+    const scenarioG_other = new Counter('G_received_other');
+    const rate429_G = new Rate('G_rate_429');
+
+    // Scenario H: HIGH VOLUME - Single tenant at 1000 RPS (limit is 40, expect ~96% rate limited)
+    const scenarioH_200 = new Counter('H_received_200');
+    const scenarioH_429 = new Counter('H_received_429');
+    const scenarioH_other = new Counter('H_received_other');
+    const rate429_H = new Rate('H_rate_429');
+
+    // -----------------------------------------------------------------------
+    // 3. CONFIGURATION
+    // -----------------------------------------------------------------------
+    export const options = {
+      scenarios: {
+        // --- A: 25 Unique Pairs @ 38 RPS (Total 950) -> Expect OK ---
+        unique_pairs_ok: {
+          executor: 'constant-arrival-rate',
+          exec: 'runUniquePairsOK',
+          rate: 950, 
+          timeUnit: '1s',
+          duration: DURATION,
+          preAllocatedVUs: 50,
+          maxVUs: 300,
+        },
+
+        // --- B: 40 Unique Pairs @ 45 RPS (Total 1800) -> Expect ~11% OVER_LIMIT ---
+        unique_pairs_429: {
+          executor: 'constant-arrival-rate',
+          exec: 'runUniquePairs429',
+          rate: 1800,
+          timeUnit: '1s',
+          duration: DURATION,
+          preAllocatedVUs: 200,
+          maxVUs: 600,
+        },
+
+        // --- C: 19 Users, Shared Tenant A @ 2 RPS (Total 38) -> Expect OK ---
+        shared_low_rate_ok: {
+          executor: 'constant-arrival-rate',
+          exec: 'runSharedLowRateOK',
+          rate: 38, 
+          timeUnit: '1s',
+          duration: DURATION,
+          preAllocatedVUs: 20,
+          maxVUs: 100,
+        },
+
+        // --- D: 2 Users, Shared Tenant B @ 19 RPS (Total 38) -> Expect OK ---
+        shared_high_rate_ok: {
+          executor: 'constant-arrival-rate',
+          exec: 'runSharedHighRateOK',
+          rate: 38, 
+          timeUnit: '1s',
+          duration: DURATION,
+          preAllocatedVUs: 10,
+          maxVUs: 100,
+        },
+
+        // --- E: 11 Users, Shared Tenant C @ 4 RPS (Total 44) -> Expect ~9% OVER_LIMIT ---
+        shared_low_rate_429: {
+          executor: 'constant-arrival-rate',
+          exec: 'runSharedLowRate429',
+          rate: 44,
+          timeUnit: '1s',
+          duration: DURATION,
+          preAllocatedVUs: 20,
+          maxVUs: 100,
+        },
+
+        // --- F: 4 Users, Shared Tenant D @ 11 RPS (Total 44) -> Expect ~9% OVER_LIMIT ---
+        shared_high_rate_429: {
+          executor: 'constant-arrival-rate',
+          exec: 'runSharedHighRate429',
+          rate: 44,
+          timeUnit: '1s',
+          duration: DURATION,
+          preAllocatedVUs: 10,
+          maxVUs: 100,
+        },
+
+        // --- G: DEBUG - Single tenant at 100 RPS (Limit 40) -> Expect ~60% OVER_LIMIT ---
+        debug_single_tenant: {
+          executor: 'constant-arrival-rate',
+          exec: 'runDebugSingleTenant',
+          rate: 100,
+          timeUnit: '1s',
+          duration: DURATION,
+          preAllocatedVUs: 20,
+          maxVUs: 150,
+        },
+
+        // --- H: HIGH VOLUME - Single tenant at 1000 RPS (Limit 40) -> Expect ~96% OVER_LIMIT ---
+        high_volume_single: {
+          executor: 'constant-arrival-rate',
+          exec: 'runHighVolumeSingleTenant',
+          rate: 1000,
+          timeUnit: '1s',
+          duration: DURATION,
+          preAllocatedVUs: 200,
+          maxVUs: 800,
+        },
+      },
+      thresholds: {
+        'http_reqs{scenario:unique_pairs_ok}': ['count>=0'],
+        'http_req_failed{scenario:unique_pairs_ok}': ['rate>=0'],
+        'http_reqs{scenario:unique_pairs_429}': ['count>=0'],
+        'http_req_failed{scenario:unique_pairs_429}': ['rate>=0'],
+        'http_reqs{scenario:shared_low_rate_ok}': ['count>=0'],
+        'http_req_failed{scenario:shared_low_rate_ok}': ['rate>=0'],
+        'http_reqs{scenario:shared_high_rate_ok}': ['count>=0'],
+        'http_req_failed{scenario:shared_high_rate_ok}': ['rate>=0'],
+        'http_reqs{scenario:shared_low_rate_429}': ['count>=0'],
+        'http_req_failed{scenario:shared_low_rate_429}': ['rate>=0'],
+        'http_reqs{scenario:shared_high_rate_429}': ['count>=0'],
+        'http_req_failed{scenario:shared_high_rate_429}': ['rate>=0'],
+        'http_reqs{scenario:debug_single_tenant}': ['count>=0'],
+        'http_req_failed{scenario:debug_single_tenant}': ['rate>=0'],
+        'http_reqs{scenario:high_volume_single}': ['count>=0'],
+        'http_req_failed{scenario:high_volume_single}': ['rate>=0'],
+      },
+      summaryTrendStats: ['min', 'avg', 'med', 'max', 'p(90)', 'p(95)', 'p(99)'],
+    };
+
+    // -----------------------------------------------------------------------
+    // 4. DATA SETUP
+    // -----------------------------------------------------------------------
+    export function setup() {
+      const gen = (p, i) => `${p}_${i}`;
+      
+      return {
+        uniqueOK: Array.from({ length: 25 }, (_, i) => ({ t: gen('t_ok', i), u: gen('u_ok', i) })),
+        unique429: Array.from({ length: 40 }, (_, i) => ({ t: gen('t_high', i), u: gen('u_high', i) })),
+        sharedLowOK: Array.from({ length: 19 }, (_, i) => ({ t: 'SHARED_TENANT_A', u: gen('u_sh_A', i) })),
+        sharedHighOK: Array.from({ length: 2 }, (_, i) => ({ t: 'SHARED_TENANT_B', u: gen('u_sh_B', i) })),
+        sharedLow429: Array.from({ length: 11 }, (_, i) => ({ t: 'SHARED_TENANT_C', u: gen('u_sh_C', i) })),
+        sharedHigh429: Array.from({ length: 4 }, (_, i) => ({ t: 'SHARED_TENANT_D', u: gen('u_sh_D', i) })),
+      };
+    }
+
+    function getPair(list) {
+      return list[scenario.iterationInTest % list.length];
+    }
+
+    // -----------------------------------------------------------------------
+    // 5. HTTP REQUEST TO RATELIMIT SERVICE
+    // -----------------------------------------------------------------------
+    // Ratelimit HTTP API uses POST /json with JSON body
+    // HTTP Response codes:
+    //   - 200 = OK (not rate limited)
+    //   - 429 = OVER_LIMIT (rate limited)
+    // 
+    // IMPORTANT: The config has tenant_id and user_id as SEPARATE flat descriptors,
+    // so we must send them as separate descriptor entries for BOTH limits to be checked.
+    // If either limit is exceeded, the overall response is OVER_LIMIT (HTTP 429).
+    function makeRatelimitRequest(pair, tag) {
+      const payload = JSON.stringify({
+        domain: DOMAIN,
+        hitsAddend: 1,
+        descriptors: [
+          {
+            entries: [
+              { key: 'tenant_id', value: pair.t }
+            ]
+          },
+          {
+            entries: [
+              { key: 'user_id', value: pair.u }
+            ]
+          }
+        ]
+      });
+
+      const params = {
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        tags: { scenario: tag }
+      };
+
+      const res = http.post(`${RATELIMIT_URL}/json`, payload, params);
+      
+      // Use HTTP status codes for reliable detection:
+      // 200 = OK, 429 = OVER_LIMIT, anything else = error
+      const isOK = res.status === 200;
+      const isOverLimit = res.status === 429;
+      
+      return { 
+        res: res, 
+        isOverLimit: isOverLimit,
+        isOK: isOK
+      };
+    }
+
+    // -----------------------------------------------------------------------
+    // 6. EXECUTORS
+    // -----------------------------------------------------------------------
+    export function runUniquePairsOK(data) {
+      group('Scenario A: Unique OK (Expect 100% Success)', function () {
+        const result = makeRatelimitRequest(getPair(data.uniqueOK), 'unique_pairs_ok');
+        if (result.isOK) scenarioA_200.add(1);
+        else if (result.isOverLimit) scenarioA_429.add(1);
+        else scenarioA_other.add(1);
+        check(result, { 'Rate limit OK': r => r.isOK });
+      });
+    }
+
+    export function runUniquePairs429(data) {
+      group('Scenario B: Unique OVER_LIMIT (Expect ~11% Rate Limited)', function () {
+        const result = makeRatelimitRequest(getPair(data.unique429), 'unique_pairs_429');
+        if (result.isOK) scenarioB_200.add(1);
+        else if (result.isOverLimit) scenarioB_429.add(1);
+        else scenarioB_other.add(1);
+        rate429_B.add(result.isOverLimit);
+      });
+    }
+
+    export function runSharedLowRateOK(data) {
+      group('Scenario C: Shared Low OK (Expect 100% Success)', function () {
+        const result = makeRatelimitRequest(getPair(data.sharedLowOK), 'shared_low_rate_ok');
+        if (result.isOK) scenarioC_200.add(1);
+        else if (result.isOverLimit) scenarioC_429.add(1);
+        else scenarioC_other.add(1);
+        check(result, { 'Rate limit OK': r => r.isOK });
+      });
+    }
+
+    export function runSharedHighRateOK(data) {
+      group('Scenario D: Shared High OK (Expect 100% Success)', function () {
+        const result = makeRatelimitRequest(getPair(data.sharedHighOK), 'shared_high_rate_ok');
+        if (result.isOK) scenarioD_200.add(1);
+        else if (result.isOverLimit) scenarioD_429.add(1);
+        else scenarioD_other.add(1);
+        check(result, { 'Rate limit OK': r => r.isOK });
+      });
+    }
+
+    export function runSharedLowRate429(data) {
+      group('Scenario E: Shared Low OVER_LIMIT (Expect ~9% Rate Limited)', function () {
+        const result = makeRatelimitRequest(getPair(data.sharedLow429), 'shared_low_rate_429');
+        if (result.isOK) scenarioE_200.add(1);
+        else if (result.isOverLimit) scenarioE_429.add(1);
+        else scenarioE_other.add(1);
+        rate429_E.add(result.isOverLimit);
+      });
+    }
+
+    export function runSharedHighRate429(data) {
+      group('Scenario F: Shared High OVER_LIMIT (Expect ~9% Rate Limited)', function () {
+        const result = makeRatelimitRequest(getPair(data.sharedHigh429), 'shared_high_rate_429');
+        if (result.isOK) scenarioF_200.add(1);
+        else if (result.isOverLimit) scenarioF_429.add(1);
+        else scenarioF_other.add(1);
+        rate429_F.add(result.isOverLimit);
+      });
+    }
+
+    export function runDebugSingleTenant(data) {
+      group('Scenario G: DEBUG Single Tenant (Expect ~60% Rate Limited)', function () {
+        // Always use the same tenant to ensure all 100 RPS hit one counter
+        const result = makeRatelimitRequest({ t: 'DEBUG_SINGLE_TENANT', u: 'debug_user' }, 'debug_single_tenant');
+        if (result.isOK) scenarioG_200.add(1);
+        else if (result.isOverLimit) scenarioG_429.add(1);
+        else scenarioG_other.add(1);
+        rate429_G.add(result.isOverLimit);
+      });
+    }
+
+    export function runHighVolumeSingleTenant(data) {
+      group('Scenario H: HIGH VOLUME Single Tenant (Expect ~96% Rate Limited)', function () {
+        // Single tenant at 1000 RPS - limit is 40, so 96% should be rate limited
+        const result = makeRatelimitRequest({ t: 'HIGH_VOLUME_TENANT', u: 'highvol_user' }, 'high_volume_single');
+        if (result.isOK) scenarioH_200.add(1);
+        else if (result.isOverLimit) scenarioH_429.add(1);
+        else scenarioH_other.add(1);
+        rate429_H.add(result.isOverLimit);
+      });
+    }
+
+    // -----------------------------------------------------------------------
+    // 7. TEARDOWN
+    // -----------------------------------------------------------------------
+    export function teardown(data) {
+      // No-op
+    }
+
+    // -----------------------------------------------------------------------
+    // 8. REPORTING - EXECUTIVE SUMMARY (GIVEN-WHEN-THEN)
+    // -----------------------------------------------------------------------
+    export function handleSummary(data) {
+      const duration = data.state.testRunDurationMs / 1000;
+      
+      function getVal(name, field = 'count') {
+        return data.metrics[name] ? data.metrics[name].values[field] : 0;
+      }
+      
+      function fmt(num) {
+        return Math.round(num).toLocaleString();
+      }
+
+      let out = '\n';
+      out += '================================================================================\n';
+      out += '              RATELIMIT SERVICE HTTP VALIDATION REPORT\n';
+      out += '================================================================================\n\n';
+      
+      out += 'TEST OVERVIEW\n';
+      out += '-------------\n';
+      out += `Target: ${RATELIMIT_URL}/json\n`;
+      out += `Domain: ${DOMAIN}\n`;
+      out += `Duration: ${duration.toFixed(1)}s\n`;
+      out += 'Verifying rate limits using direct HTTP calls to ratelimit service.\n\n';
+
+      const scenarios = [
+        {
+          name: 'A: Unique Users (Normal Traffic)',
+          given: '25 unique tenant/user pairs',
+          when:  'sending 38 RPS each (Total: 950 RPS, Limit: 40/s per pair)',
+          then:  'All requests should return OK',
+          pfx: 'A',
+          type: 'ok'
+        },
+        {
+          name: 'B: Unique Users (High Traffic)',
+          given: '40 unique tenant/user pairs',
+          when:  'sending 45 RPS each (Limit is 40 RPS per pair)',
+          then:  'Excess traffic (~11%) should return OVER_LIMIT',
+          pfx: 'B',
+          type: 'limit'
+        },
+        {
+          name: 'C: Shared Tenant (Low Traffic)',
+          given: '19 users sharing one tenant',
+          when:  'sending 2 RPS each (Total: 38 RPS, Limit: 40/s)',
+          then:  'All requests should return OK',
+          pfx: 'C',
+          type: 'ok'
+        },
+        {
+          name: 'D: Shared Tenant (High Traffic)',
+          given: '2 users sharing one tenant',
+          when:  'sending 19 RPS each (Total: 38 RPS, Limit: 40/s)',
+          then:  'All requests should return OK',
+          pfx: 'D',
+          type: 'ok'
+        },
+        {
+          name: 'E: Shared Tenant (Over Limit 1)',
+          given: '11 users sharing one tenant',
+          when:  'sending 4 RPS each (Total: 44 RPS, Limit is 40)',
+          then:  'Excess traffic (~9%) should return OVER_LIMIT',
+          pfx: 'E',
+          type: 'limit'
+        },
+        {
+          name: 'F: Shared Tenant (Over Limit 2)',
+          given: '4 users sharing one tenant',
+          when:  'sending 11 RPS each (Total: 44 RPS, Limit is 40)',
+          then:  'Excess traffic (~9%) should return OVER_LIMIT',
+          pfx: 'F',
+          type: 'limit'
+        },
+        {
+          name: 'G: DEBUG Single Tenant (100 RPS)',
+          given: '1 tenant receiving all traffic',
+          when:  'sending 100 RPS (Limit is 40)',
+          then:  'Excess traffic (~60%) should return OVER_LIMIT',
+          pfx: 'G',
+          type: 'limit'
+        },
+        {
+          name: 'H: HIGH VOLUME Single Tenant (1000 RPS)',
+          given: '1 tenant receiving all traffic',
+          when:  'sending 1000 RPS (Limit is 40)',
+          then:  'Excess traffic (~96%) should return OVER_LIMIT',
+          pfx: 'H',
+          type: 'limit'
+        }
+      ];
+
+      scenarios.forEach(s => {
+        const act200 = getVal(`${s.pfx}_received_200`);
+        const act429 = getVal(`${s.pfx}_received_429`);
+        const total = act200 + act429;
+        const rate429 = (total > 0) ? (act429 / total * 100) : 0;
+        
+        out += `SCENARIO ${s.name}\n`;
+        out += `--------------------------------------------------------------------------------\n`;
+        out += `   GIVEN: ${s.given}\n`;
+        out += `   WHEN:  ${s.when}\n`;
+        out += `   THEN:  ${s.then}\n\n`;
+        
+        out += `   ACTUAL RESULT:\n`;
+        if (s.type === 'limit') {
+             out += `   - OVER_LIMIT: ${fmt(act429)} requests (${rate429.toFixed(2)}%)\n`;
+             out += `   - OK:         ${fmt(act200)} requests\n`;
+             const targetPct = s.pfx === 'B' ? '11' : (s.pfx === 'G' ? '60' : (s.pfx === 'H' ? '96' : '9'));
+             out += `   - Target:     ~${targetPct}% rate limited\n`;
+        } else {
+             out += `   - OK:         ${fmt(act200)} requests\n`;
+             out += `   - OVER_LIMIT: ${fmt(act429)} requests\n`;
+        }
+        
+        let passed = false;
+        if (s.type === 'ok') {
+            // Allow up to 1% tolerance for timing edge cases
+            passed = (rate429 < 1.0);
+        } else {
+            // Expect some rate limiting to occur
+            passed = (act429 > 0); 
+        }
+        
+        out += `   \n   STATUS: ${passed ? '✅ AS EXPECTED' : '❌ UNEXPECTED'}\n`;
+        out += `\n`;
+      });
+
+      out += '================================================================================\n';
+      out += 'OVERALL PERFORMANCE\n';
+      out += '-------------------\n';
+      const httpDuration = data.metrics.http_req_duration;
+      if (httpDuration && httpDuration.values) {
+        out += `   Average Latency: ${httpDuration.values.avg.toFixed(2)} ms\n`;
+        out += `   95th Percentile: ${httpDuration.values['p(95)'].toFixed(2)} ms\n`;
+        out += `   99th Percentile: ${httpDuration.values['p(99)'].toFixed(2)} ms\n`;
+        out += `   Max Latency:     ${httpDuration.values.max.toFixed(2)} ms\n`;
+      }
+      
+      let totalOther = 0;
+      let totalReqs = 0;
+      scenarios.forEach(s => {
+         const act200 = getVal(`${s.pfx}_received_200`);
+         const act429 = getVal(`${s.pfx}_received_429`);
+         const valOther = getVal(`${s.pfx}_received_other`);
+         totalOther += valOther;
+         totalReqs += (act200 + act429 + valOther);
+      });
+      
+      const errorRate = (totalReqs > 0) ? (totalOther / totalReqs * 100).toFixed(4) : '0.0000';
+      
+      out += '\nERROR ANALYSIS (Non-OK/OVER_LIMIT Responses)\n';
+      out += '--------------------------------------------\n';
+      out += `   Total Requests:    ${fmt(totalReqs)}\n`;
+      out += `   Failed/Other:      ${fmt(totalOther)}\n`;
+      out += `   Error Rate:        ${errorRate}%\n`;
+      
+      out += '================================================================================\n';
+
+      return {
+        'stdout': out,
+      };
+    }
+
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: k6-ratelimit-http-runner
+  namespace: envoy-ratelimit
+spec:
+  template:
+    metadata:
+      labels:
+        app: k6-ratelimit-http-runner
+    spec:
+      containers:
+      - name: k6
+        image: grafana/k6:latest
+        command: ["k6", "run", "/scripts/script.js"]
+        env:
+          # Ratelimit service endpoint (HTTP JSON API)
+          - name: RATELIMIT_URL
+            value: "http://envoy-ratelimit.envoy-ratelimit.svc.cluster.local:8080"
+          # Domain from ratelimit config
+          - name: DOMAIN
+            value: "test"
+          # Test duration
+          - name: TEST_DURATION
+            value: "600s"
+          # Rate limits from config
+          - name: TENANT_LIMIT
+            value: "40"
+          - name: USER_LIMIT
+            value: "40"
+          # Expected Drop Rates
+          - name: EXPECTED_DROP_RATE_B
+            value: "0.1111"
+          - name: EXPECTED_DROP_RATE_E
+            value: "0.0909"
+          - name: EXPECTED_DROP_RATE_F
+            value: "0.0909"
+        volumeMounts:
+        - name: script-vol
+          mountPath: /scripts
+        resources:
+          requests:
+            cpu: "1750m"
+            memory: "512Mi"
+          limits:
+            cpu: "1750m"
+            memory: "1Gi"
+      restartPolicy: Never
+      volumes:
+      - name: script-vol
+        configMap:
+          name: k6-ratelimit-http-script
+  backoffLimit: 0
+

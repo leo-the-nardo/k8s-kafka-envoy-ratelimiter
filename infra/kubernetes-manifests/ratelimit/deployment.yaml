@@ -1,18 +1,24 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: ratelimit-service
-  namespace: default
+  name: envoy-ratelimit
+  namespace: envoy-ratelimit
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: ratelimit-service
+      app: envoy-ratelimit
   template:
     metadata:
       labels:
-        app: ratelimit-service
+        app: envoy-ratelimit
+        # compute-type: fargate
+        agent.datadoghq.com/sidecar: fargate
+      annotations:
+        ad.datadoghq.com/ratelimit.logs: '[{"source": "envoy-ratelimit", "service": "envoy-ratelimit"}]'
+        ad.datadoghq.com/appconfig-agent.logs: '[{"source": "appconfig-agent", "service": "envoy-ratelimit"}]'
     spec:
+      serviceAccountName: envoy-ratelimit
       containers:
         - name: ratelimit
           image: envoyproxy/ratelimit:99d85510
@@ -28,88 +34,189 @@ spec:
                   name: ratelimit-redis-creds
                   key: REDIS_PASSWORD
             - name: LOG_LEVEL
-              value: debug
+              value: info
+            - name: LOG_FORMAT
+              value: json
             - name: REDIS_SOCKET_TYPE
               value: tcp
             - name: REDIS_URL
-              value: envoy-ratelimit-redis-pr7hih.serverless.use1.cache.amazonaws.com:6379
+            # value: envoy-ratelimit-redis-pr7hih.serverless.use1.cache.amazonaws.com:6379
+              valueFrom:
+                secretKeyRef:
+                  name: ratelimit-redis-creds
+                  key: REDIS_URL
             - name: USE_STATSD
               value: "false"
+            - name: USE_DOG_STATSD
+              value: "true"
+            - name: STATS_FLUSH_INTERVAL
+              value: "10s"
+            - name: STATSD_HOST
+              value: "127.0.0.1"
+            - name: STATSD_PORT
+              value: "8125"
             - name: RUNTIME_ROOT
               value: /data
             - name: RUNTIME_SUBDIRECTORY
               value: ratelimit
+            - name: FORCE_START_WITHOUT_INITIAL_CONFIG
+              value: "false"
+            #https://github.com/envoyproxy/ratelimit/blob/e4ac90e83cbd88d564fd5ea0fa4081388f1401cb/README.md#loading-configuration
+            - name: RUNTIME_WATCH_ROOT
+              value: "false"
+            - name: RUNTIME_IGNOREDOTFILES
+              value: "true"
+            - name: STOP_CACHE_KEY_INCREMENT_WHEN_OVERLIMIT
+              value: "false"
+            # metrics - DogStatsD with mogrifiers for tagged metrics
+            # See source: https://github.com/envoyproxy/ratelimit/blob/main/src/godogstats/mogrifier_map.go
+            - name: EXTRA_TAGS
+              value: "env:production,cluster:dev-eks-cluster"
+            - name: USE_DOG_STATSD_MOGRIFIERS
+              value: "RATELIMIT"
+            # Pattern: ratelimit.service.rate_limit.<domain>.<key>_<value>.<stat>
+            # Captures: $1=domain, $2=descriptor_key, $3=descriptor_value, $4=stat
+            - name: DOG_STATSD_MOGRIFIER_RATELIMIT_PATTERN
+              value: "^ratelimit\\.service\\.rate_limit\\.([^.]+)\\.(tenant_id|user_id|test_key|silver_filter|gold_filter)(?:_(.+))?\\.([^.]+)$"
+            - name: DOG_STATSD_MOGRIFIER_RATELIMIT_NAME
+              value: "ratelimit.service.rate_limit.$4"
+            # envconfig maps use comma-separated key:value format
+            - name: DOG_STATSD_MOGRIFIER_RATELIMIT_TAGS
+              value: "domain:$1,descriptor_key:$2,descriptor_value:$3"
+            # - name: REDIS_TIMEOUT
+              # value: "1000ms"
+            - name: REDIS_POOL_SIZE
+              value: "10"
+            - name: BACKEND_TYPE
+              value: "redis"
+            - name: TRACING_ENABLED
+              value: "true"
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: "http://127.0.0.1:4317"
+            - name: OTEL_EXPORTER_OTLP_INSECURE
+              value: "true"
+            - name: TRACING_EXPORTER_PROTOCOL
+              value: "grpc"
+            - name: TRACING_SERVICE_NAME
+              value: "envoy-ratelimit"
+            - name: TRACING_SAMPLING_RATE
+              value: "1.0"
+            - name: TRACING_SERVICE_INSTANCE_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: TRACING_SERVICE_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
           ports:
             - containerPort: 8081
               name: grpc
             - containerPort: 8080
               name: http
+              #https://github.com/envoyproxy/ratelimit/blob/e4ac90e83cbd88d564fd5ea0fa4081388f1401cb/README.md#debug-port
+            - containerPort: 6070
+              name: debug
           resources:
             requests:
-              cpu: 250m
-              memory: 256Mi
+              cpu: "1500m"
+              # cpu: "2000m"
+              memory: "0.5Gi"
             limits:
-              cpu: 500m
-              memory: 512Mi
+              cpu: "1500m"
+              # cpu: "2000m"
+              memory: "1Gi"
           volumeMounts:
             - name: config-volume
               mountPath: /data/ratelimit/config
-              subPath: config.yaml
+        
+        # AppConfig Agent Sidecar
+        - name: appconfig-agent
+          image: public.ecr.aws/aws-appconfig/aws-appconfig-agent:2.x
+          securityContext: #runing appconfig agent with same user as the ratelimit service distroless image
+            runAsUser: 65532
+            runAsGroup: 65532
+          ports:
+            - containerPort: 2772
+          env:
+            - name: SERVICE_REGION
+              value: us-east-1
+            - name: PREFETCH_LIST
+              value: "envoy-ratelimit:production:ratelimit-config"
+            - name: MANIFEST
+              value: "file:/etc/appconfig/manifest.json"
+            - name: POLL_INTERVAL
+              value: "15"
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              cpu: 20m
+              memory: 64Mi
+          volumeMounts:
+            - name: config-volume
+              mountPath: /data/ratelimit/config
+            - name: appconfig-agent-manifest
+              mountPath: /etc/appconfig
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: DoNotSchedule
+          labelSelector:
+            matchLabels:
+              app: envoy-ratelimit
+      nodeSelector:
+        kubernetes.io/arch: arm64
+
       volumes:
         - name: config-volume
+          emptyDir: {}
+        - name: appconfig-agent-manifest
           configMap:
-            name: ratelimit-config
+            name: appconfig-agent-manifest
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: ratelimit-service
-  namespace: default
+  name: envoy-ratelimit
+  namespace: envoy-ratelimit
 spec:
+  clusterIP: None
   selector:
-    app: ratelimit-service
+    app: envoy-ratelimit
   ports:
     - port: 8081
       targetPort: 8081
       name: grpc
     - port: 8080
       targetPort: 8080
-      name: http-admin
+      name: http
+    - port: 6070
+      targetPort: 6070
+      name: debug
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: envoy-ratelimit
+  namespace: envoy-ratelimit
+  annotations:
+    # REPLACE WITH YOUR ACTUAL IAM ROLE ARN
+    eks.amazonaws.com/role-arn: arn:aws:iam::068064050187:role/RateLimitAppConfigRole
 ---
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: ratelimit-config
-  namespace: default
+  name: appconfig-agent-manifest
+  namespace: envoy-ratelimit
 data:
-  config.yaml: |
-    domain: kafka-consumer
-    descriptors:
-      - key: tenant_id
-        rate_limit:
-          unit: second
-          requests_per_unit: 40
-      - key: user_id
-        rate_limit:
-          unit: second
-          requests_per_unit: 40
+  manifest.json: |
+    {
+      "envoy-ratelimit:production:ratelimit-config": {
+        "writeTo": {
+          "path": "/data/ratelimit/config/config.yaml"
+        }
+      }
+    }
 ---
-apiVersion: autoscaling/v2
-kind: HorizontalPodAutoscaler
-metadata:
-  name: ratelimit-hpa
-  namespace: default
-spec:
-  scaleTargetRef:
-    apiVersion: apps/v1
-    kind: Deployment
-    name: ratelimit-service
-  minReplicas: 2
-  maxReplicas: 10
-  metrics:
-    - type: Resource
-      resource:
-        name: cpu
-        target:
-          type: Utilization
-          averageUtilization: 70

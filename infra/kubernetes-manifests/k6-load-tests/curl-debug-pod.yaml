@@ -1,0 +1,82 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: curl-debug
+  namespace: envoy-ratelimit
+  labels:
+    app: curl-debug
+spec:
+  containers:
+  - name: curl
+    image: curlimages/curl:latest
+    command: ["sleep", "infinity"]
+    resources:
+      requests:
+        cpu: "10m"
+        memory: "32Mi"
+      limits:
+        cpu: "100m"
+        memory: "64Mi"
+  restartPolicy: Never
+---
+# Quick reference commands after exec into the pod:
+#
+# kubectl apply -f curl-debug-pod.yaml
+# kubectl exec -it curl-debug -n envoy-ratelimit -- sh
+#
+# ============================================================================
+# TEST 1: Basic connectivity check
+# ============================================================================
+# curl -v http://envoy-ratelimit:8080/json \
+#   -H "Content-Type: application/json" \
+#   -d '{"domain":"test","descriptors":[{"entries":[{"key":"test_key","value":"debug1"}]}]}'
+#
+# ============================================================================
+# TEST 2: Single tenant_id request (should return 200 OK first time)
+# ============================================================================
+# curl -s http://envoy-ratelimit:8080/json \
+#   -H "Content-Type: application/json" \
+#   -d '{"domain":"test","hitsAddend":1,"descriptors":[{"entries":[{"key":"tenant_id","value":"debug_tenant"}]}]}'
+#
+# ============================================================================
+# TEST 3: Rapid fire to trigger rate limit (run in loop - limit is 40/s)
+# ============================================================================
+# for i in $(seq 1 50); do
+#   curl -s -o /dev/null -w "%{http_code}\n" http://envoy-ratelimit:8080/json \
+#     -H "Content-Type: application/json" \
+#     -d '{"domain":"test","hitsAddend":1,"descriptors":[{"entries":[{"key":"tenant_id","value":"rapid_test"}]}]}'
+# done
+#
+# ============================================================================
+# TEST 4: Check response details
+# ============================================================================
+# curl -s http://envoy-ratelimit:8080/json \
+#   -H "Content-Type: application/json" \
+#   -d '{"domain":"test","hitsAddend":1,"descriptors":[{"entries":[{"key":"tenant_id","value":"check_response"}]}]}' | jq .
+#
+# ============================================================================
+# TEST 5: With both tenant_id and user_id (separate descriptors)
+# ============================================================================
+# curl -s http://envoy-ratelimit:8080/json \
+#   -H "Content-Type: application/json" \
+#   -d '{"domain":"test","hitsAddend":1,"descriptors":[{"entries":[{"key":"tenant_id","value":"t1"}]},{"entries":[{"key":"user_id","value":"u1"}]}]}' | jq .
+#
+# ============================================================================
+# TEST 6: Sustained load test (50 requests as fast as possible)
+# ============================================================================
+# echo "Starting rapid fire test..."
+# count_200=0; count_429=0; count_other=0
+# for i in $(seq 1 50); do
+#   code=$(curl -s -o /dev/null -w "%{http_code}" http://envoy-ratelimit:8080/json \
+#     -H "Content-Type: application/json" \
+#     -d '{"domain":"test","hitsAddend":1,"descriptors":[{"entries":[{"key":"tenant_id","value":"load_test"}]}]}')
+#   case $code in
+#     200) count_200=$((count_200+1)) ;;
+#     429) count_429=$((count_429+1)) ;;
+#     *) count_other=$((count_other+1)) ;;
+#   esac
+# done
+# echo "Results: 200=$count_200, 429=$count_429, other=$count_other"
+#
+# ============================================================================
+

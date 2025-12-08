@@ -1,0 +1,189 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: k6-ratelimit-http-over-kt-script
+  namespace: envoy-ratelimit
+data:
+  script.js: |
+    import http from 'k6/http';
+    import { check, group } from 'k6';
+    import { scenario } from 'k6/execution';
+    import { Rate, Counter } from 'k6/metrics';
+
+    // -----------------------------------------------------------------------
+    // 1. ENVIRONMENT VARIABLES
+    // -----------------------------------------------------------------------
+    // Target the kt-backend service
+    const RATELIMIT_URL = __ENV.RATELIMIT_URL || 'http://kt-backend.envoy-ratelimit.svc.cluster.local:80';
+    const DURATION = __ENV.TEST_DURATION || '60s';
+    
+    // Configuration: 10 users @ 300 TPS each = 3000 TPS
+    const TOTAL_USERS = 10;
+    const TPS_PER_USER = 300;
+    const TOTAL_TPS = TOTAL_USERS * TPS_PER_USER; // 3000
+
+    // -----------------------------------------------------------------------
+    // 2. METRICS
+    // -----------------------------------------------------------------------
+    const received_200 = new Counter('received_200');
+    const received_429 = new Counter('received_429');
+    const received_other = new Counter('received_other');
+    const rate_429 = new Rate('rate_429');
+
+    // -----------------------------------------------------------------------
+    // 3. CONFIGURATION
+    // -----------------------------------------------------------------------
+    export const options = {
+      scenarios: {
+        // 10 users * 300 TPS = 3000 TPS
+        constant_load: {
+          executor: 'constant-arrival-rate',
+          exec: 'runScenario',
+          rate: TOTAL_TPS,
+          timeUnit: '1s',
+          duration: DURATION,
+          preAllocatedVUs: 100,
+          maxVUs: 300,
+        },
+      },
+      thresholds: {
+        'http_reqs': ['count>=0'],
+      },
+      summaryTrendStats: ['min', 'avg', 'med', 'max', 'p(90)', 'p(95)', 'p(99)'],
+    };
+
+    // -----------------------------------------------------------------------
+    // 4. DATA SETUP
+    // -----------------------------------------------------------------------
+    export function setup() {
+      // Create 10 distinct users
+      const users = Array.from({ length: TOTAL_USERS }, (_, i) => ({
+        u: `user_${i}`
+      }));
+      
+      console.log(`\n=== TEST CONFIGURATION ===`);
+      console.log(`Target: ${RATELIMIT_URL}`);
+      console.log(`Users: ${TOTAL_USERS} distinct users`);
+      console.log(`Rate: ${TPS_PER_USER} TPS per user`);
+      console.log(`Total: ${TOTAL_TPS} TPS`);
+      console.log(`Duration: ${DURATION}`);
+      console.log(`===========================\n`);
+      
+      return { users };
+    }
+
+    // -----------------------------------------------------------------------
+    // 5. SCENARIO EXECUTION
+    // -----------------------------------------------------------------------
+    export function runScenario(data) {
+      // Round-robin selection of users
+      const userIndex = scenario.iterationInTest % data.users.length;
+      const user = data.users[userIndex];
+      
+      // Make HTTP GET request to kt-backend
+      // The backend expects /ratelimit?user_id=...
+      const res = http.get(`${RATELIMIT_URL}/ratelimit?user_id=${user.u}`);
+      
+      const isOK = res.status === 200;
+      const isOverLimit = res.status === 429;
+      
+      if (isOK) received_200.add(1);
+      else if (isOverLimit) received_429.add(1);
+      else received_other.add(1);
+      
+      rate_429.add(isOverLimit);
+    }
+
+    // -----------------------------------------------------------------------
+    // 6. REPORTING
+    // -----------------------------------------------------------------------
+    export function handleSummary(data) {
+      const duration = data.state.testRunDurationMs / 1000;
+      
+      function getVal(name, field = 'count') {
+        return data.metrics[name] ? data.metrics[name].values[field] : 0;
+      }
+      
+      function fmt(num) {
+        return Math.round(num).toLocaleString();
+      }
+
+      const c200 = getVal('received_200');
+      const c429 = getVal('received_429');
+      const cOther = getVal('received_other');
+      const total = c200 + c429 + cOther;
+      const rps = total / duration;
+      const rate429 = (total > 0) ? (c429 / total * 100) : 0;
+
+      let out = '\n';
+      out += '================================================================================\n';
+      out += '                    KT-BACKEND RATE LIMIT TEST\n';
+      out += '================================================================================\n\n';
+
+      out += `   Config:          ${TOTAL_USERS} users @ ${TPS_PER_USER} TPS each\n`;
+      out += `   Target TPS:      ${TOTAL_TPS}\n`;
+      out += `   Actual TPS:      ${rps.toFixed(0)}\n`;
+      out += `   Duration:        ${duration.toFixed(1)}s\n\n`;
+      
+      out += `   Results:\n`;
+      out += `   - Total:         ${fmt(total)}\n`;
+      out += `   - OK (200):      ${fmt(c200)} (${(c200/total*100).toFixed(2)}%)\n`;
+      out += `   - OVER_LIMIT:    ${fmt(c429)} (${rate429.toFixed(2)}%)\n`;
+      out += `   - Other:         ${fmt(cOther)}\n\n`;
+
+      out += 'PERFORMANCE\n';
+      out += '-----------\n';
+      const httpDuration = data.metrics.http_req_duration;
+      if (httpDuration && httpDuration.values) {
+        out += `   Average Latency: ${httpDuration.values.avg.toFixed(2)} ms\n`;
+        out += `   P95 Latency:     ${httpDuration.values['p(95)'].toFixed(2)} ms\n`;
+        out += `   P99 Latency:     ${httpDuration.values['p(99)'].toFixed(2)} ms\n`;
+        out += `   Max Latency:     ${httpDuration.values.max.toFixed(2)} ms\n`;
+      }
+      
+      out += '\n================================================================================\n';
+
+      return {
+        'stdout': out,
+      };
+    }
+
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: k6-ratelimit-http-over-kt
+  namespace: envoy-ratelimit
+spec:
+  template:
+    metadata:
+      labels:
+        app: k6-ratelimit-http-over-kt
+    spec:
+      containers:
+      - name: k6
+        image: grafana/k6:latest
+        command: ["k6", "run", "/scripts/script.js"]
+        env:
+          - name: RATELIMIT_URL
+            value: "http://kt-backend.envoy-ratelimit.svc.cluster.local:80"
+          - name: TEST_DURATION
+            value: "1800s" # Short duration for quick test, can be increased
+        volumeMounts:
+        - name: script-vol
+          mountPath: /scripts
+        resources:
+          requests:
+            cpu: "1700m"
+            memory: "2Gi"
+          limits:
+            cpu: "1700m"
+            memory: "2Gi"
+      restartPolicy: Never
+      nodeSelector:
+        kubernetes.io/arch: amd64
+      volumes:
+      - name: script-vol
+        configMap:
+          name: k6-ratelimit-http-over-kt-script
+  backoffLimit: 0

@@ -1,0 +1,14 @@
+syntax = "proto3";
+
+package envoy.config.core.v3;
+
+option java_package = "io.envoyproxy.envoy.config.core.v3";
+option java_outer_classname = "BaseProto";
+option java_multiple_files = true;
+option go_package = "github.com/envoyproxy/go-control-plane/envoy/config/core/v3;corev3";
+
+// Minimal definition for RLS
+message HeaderValue {
+  string key = 1;
+  string value = 2;
+}

@@ -1,0 +1,181 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ghz-proto
+  namespace: default
+data:
+  rls.proto: |
+    syntax = "proto3";
+
+    package envoy.service.ratelimit.v3;
+
+    message RateLimitRequest {
+      string domain = 1;
+      repeated RateLimitDescriptor descriptors = 2;
+      uint32 hits_addend = 3;
+    }
+
+    message RateLimitDescriptor {
+      message Entry {
+        string key = 1;
+        string value = 2;
+      }
+      repeated Entry entries = 1;
+    }
+
+    message RateLimitResponse {
+      enum Code {
+        UNKNOWN = 0;
+        OK = 1;
+        OVER_LIMIT = 2;
+      }
+
+      message DescriptorStatus {
+        Code code = 1;
+      }
+
+      Code overall_code = 1;
+      repeated DescriptorStatus statuses = 2;
+    }
+
+    service RateLimitService {
+      rpc ShouldRateLimit(RateLimitRequest) returns (RateLimitResponse) {}
+    }
+---
+# Data file with all 6 scenarios mixed together
+# Total: 950 + 1800 + 38 + 38 + 44 + 44 = 2914 RPS
+# Distribution weighted by RPS ratio
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ghz-scenarios
+  namespace: default
+data:
+  # Scenario distribution (weighted to match k6 test ratios):
+  # A: 25 unique pairs (950 RPS / 2914 = 32.6%)
+  # B: 40 unique pairs (1800 RPS / 2914 = 61.8%)  
+  # C: 19 users shared tenant (38 RPS / 2914 = 1.3%)
+  # D: 2 users shared tenant (38 RPS / 2914 = 1.3%)
+  # E: 11 users shared tenant (44 RPS / 2914 = 1.5%)
+  # F: 4 users shared tenant (44 RPS / 2914 = 1.5%)
+  scenarios.json: |
+    [
+      {"domain":"test","descriptors":[{"entries":[{"key":"tenant_id","value":"t_ok_0"}]},{"entries":[{"key":"user_id","value":"u_ok_0"}]}]},
+      {"domain":"test","descriptors":[{"entries":[{"key":"tenant_id","value":"t_ok_1"}]},{"entries":[{"key":"user_id","value":"u_ok_1"}]}]},
+      {"domain":"test","descriptors":[{"entries":[{"key":"tenant_id","value":"t_ok_2"}]},{"entries":[{"key":"user_id","value":"u_ok_2"}]}]},
+      {"domain":"test","descriptors":[{"entries":[{"key":"tenant_id","value":"t_ok_3"}]},{"entries":[{"key":"user_id","value":"u_ok_3"}]}]},
+      {"domain":"test","descriptors":[{"entries":[{"key":"tenant_id","value":"t_ok_4"}]},{"entries":[{"key":"user_id","value":"u_ok_4"}]}]},
+      {"domain":"test","descriptors":[{"entries":[{"key":"tenant_id","value":"t_ok_5"}]},{"entries":[{"key":"user_id","value":"u_ok_5"}]}]},
+      {"domain":"test","descriptors":[{"entries":[{"key":"tenant_id","value":"t_ok_6"}]},{"entries":[{"key":"user_id","value":"u_ok_6"}]}]},
+      {"domain":"test","descriptors":[{"entries":[{"key":"tenant_id","value":"t_ok_7"}]},{"entries":[{"key":"user_id","value":"u_ok_7"}]}]},
+      {"domain":"test","descriptors":[{"entries":[{"key":"tenant_id","value":"t_ok_8"}]},{"entries":[{"key":"user_id","value":"u_ok_8"}]}]},
+      {"domain":"test","descriptors":[{"entries":[{"key":"tenant_id","value":"t_ok_9"}]},{"entries":[{"key":"user_id","value":"u_ok_9"}]}]},
+      {"domain":"test","descriptors":[{"entries":[{"key":"tenant_id","value":"t_ok_10"}]},{"entries":[{"key":"user_id","value":"u_ok_10"}]}]},
+      {"domain":"test","descriptors":[{"entries":[{"key":"tenant_id","value":"t_ok_11"}]},{"entries":[{"key":"user_id","value":"u_ok_11"}]}]},
+      {"domain":"test","descriptors":[{"entries":[{"key":"tenant_id","value":"t_ok_12"}]},{"entries":[{"key":"user_id","value":"u_ok_12"}]}]},
+      {"domain":"test","descriptors":[{"entries":[{"key":"tenant_id","value":"t_ok_13"}]},{"entries":[{"key":"user_id","value":"u_ok_13"}]}]},
+      {"domain":"test","descriptors":[{"entries":[{"key":"tenant_id","value":"t_ok_14"}]},{"entries":[{"key":"user_id","value":"u_ok_14"}]}]},
+      {"domain":"test","descriptors":[{"entries":[{"key":"tenant_id","value":"t_ok_15"}]},{"entries":[{"key":"user_id","value":"u_ok_15"}]}]},
+      {"domain":"test","descriptors":[{"entries":[{"key":"tenant_id","value":"t_ok_16"}]},{"entries":[{"key":"user_id","value":"u_ok_16"}]}]},
+      {"domain":"test","descriptors":[{"entries":[{"key":"tenant_id","value":"t_ok_17"}]},{"entries":[{"key":"user_id","value":"u_ok_17"}]}]},
+      {"domain":"test","descriptors":[{"entries":[{"key":"tenant_id","value":"t_ok_18"}]},{"entries":[{"key":"user_id","value":"u_ok_18"}]}]},
+      {"domain":"test","descriptors":[{"entries":[{"key":"tenant_id","value":"t_ok_19"}]},{"entries":[{"key":"user_id","value":"u_ok_19"}]}]},
+      {"domain":"test","descriptors":[{"entries":[{"key":"tenant_id","value":"t_ok_20"}]},{"entries":[{"key":"user_id","value":"u_ok_20"}]}]},
+      {"domain":"test","descriptors":[{"entries":[{"key":"tenant_id","value":"t_ok_21"}]},{"entries":[{"key":"user_id","value":"u_ok_21"}]}]},
+      {"domain":"test","descriptors":[{"entries":[{"key":"tenant_id","value":"t_ok_22"}]},{"entries":[{"key":"user_id","value":"u_ok_22"}]}]},
+      {"domain":"test","descriptors":[{"entries":[{"key":"tenant_id","value":"t_ok_23"}]},{"entries":[{"key":"user_id","value":"u_ok_23"}]}]},
+      {"domain":"test","descriptors":[{"entries":[{"key":"tenant_id","value":"t_ok_24"}]},{"entries":[{"key":"user_id","value":"u_ok_24"}]}]},
+      {"domain":"test","descriptors":[{"entries":[{"key":"tenant_id","value":"t_high_0"}]},{"entries":[{"key":"user_id","value":"u_high_0"}]}]},
+      {"domain":"test","descriptors":[{"entries":[{"key":"tenant_id","value":"t_high_1"}]},{"entries":[{"key":"user_id","value":"u_high_1"}]}]},
+      {"domain":"test","descriptors":[{"entries":[{"key":"tenant_id","value":"t_high_2"}]},{"entries":[{"key":"user_id","value":"u_high_2"}]}]},
+      {"domain":"test","descriptors":[{"entries":[{"key":"tenant_id","value":"t_high_3"}]},{"entries":[{"key":"user_id","value":"u_high_3"}]}]},
+      {"domain":"test","descriptors":[{"entries":[{"key":"tenant_id","value":"t_high_4"}]},{"entries":[{"key":"user_id","value":"u_high_4"}]}]},
+      {"domain":"test","descriptors":[{"entries":[{"key":"tenant_id","value":"t_high_5"}]},{"entries":[{"key":"user_id","value":"u_high_5"}]}]},
+      {"domain":"test","descriptors":[{"entries":[{"key":"tenant_id","value":"t_high_6"}]},{"entries":[{"key":"user_id","value":"u_high_6"}]}]},
+      {"domain":"test","descriptors":[{"entries":[{"key":"tenant_id","value":"t_high_7"}]},{"entries":[{"key":"user_id","value":"u_high_7"}]}]},
+      {"domain":"test","descriptors":[{"entries":[{"key":"tenant_id","value":"t_high_8"}]},{"entries":[{"key":"user_id","value":"u_high_8"}]}]},
+      {"domain":"test","descriptors":[{"entries":[{"key":"tenant_id","value":"t_high_9"}]},{"entries":[{"key":"user_id","value":"u_high_9"}]}]},
+      {"domain":"test","descriptors":[{"entries":[{"key":"tenant_id","value":"t_high_10"}]},{"entries":[{"key":"user_id","value":"u_high_10"}]}]},
+      {"domain":"test","descriptors":[{"entries":[{"key":"tenant_id","value":"t_high_11"}]},{"entries":[{"key":"user_id","value":"u_high_11"}]}]},
+      {"domain":"test","descriptors":[{"entries":[{"key":"tenant_id","value":"t_high_12"}]},{"entries":[{"key":"user_id","value":"u_high_12"}]}]},
+      {"domain":"test","descriptors":[{"entries":[{"key":"tenant_id","value":"t_high_13"}]},{"entries":[{"key":"user_id","value":"u_high_13"}]}]},
+      {"domain":"test","descriptors":[{"entries":[{"key":"tenant_id","value":"t_high_14"}]},{"entries":[{"key":"user_id","value":"u_high_14"}]}]},
+      {"domain":"test","descriptors":[{"entries":[{"key":"tenant_id","value":"t_high_15"}]},{"entries":[{"key":"user_id","value":"u_high_15"}]}]},
+      {"domain":"test","descriptors":[{"entries":[{"key":"tenant_id","value":"t_high_16"}]},{"entries":[{"key":"user_id","value":"u_high_16"}]}]},
+      {"domain":"test","descriptors":[{"entries":[{"key":"tenant_id","value":"t_high_17"}]},{"entries":[{"key":"user_id","value":"u_high_17"}]}]},
+      {"domain":"test","descriptors":[{"entries":[{"key":"tenant_id","value":"t_high_18"}]},{"entries":[{"key":"user_id","value":"u_high_18"}]}]},
+      {"domain":"test","descriptors":[{"entries":[{"key":"tenant_id","value":"t_high_19"}]},{"entries":[{"key":"user_id","value":"u_high_19"}]}]},
+      {"domain":"test","descriptors":[{"entries":[{"key":"tenant_id","value":"t_high_20"}]},{"entries":[{"key":"user_id","value":"u_high_20"}]}]},
+      {"domain":"test","descriptors":[{"entries":[{"key":"tenant_id","value":"t_high_21"}]},{"entries":[{"key":"user_id","value":"u_high_21"}]}]},
+      {"domain":"test","descriptors":[{"entries":[{"key":"tenant_id","value":"t_high_22"}]},{"entries":[{"key":"user_id","value":"u_high_22"}]}]},
+      {"domain":"test","descriptors":[{"entries":[{"key":"tenant_id","value":"t_high_23"}]},{"entries":[{"key":"user_id","value":"u_high_23"}]}]},
+      {"domain":"test","descriptors":[{"entries":[{"key":"tenant_id","value":"t_high_24"}]},{"entries":[{"key":"user_id","value":"u_high_24"}]}]},
+      {"domain":"test","descriptors":[{"entries":[{"key":"tenant_id","value":"t_high_25"}]},{"entries":[{"key":"user_id","value":"u_high_25"}]}]},
+      {"domain":"test","descriptors":[{"entries":[{"key":"tenant_id","value":"t_high_26"}]},{"entries":[{"key":"user_id","value":"u_high_26"}]}]},
+      {"domain":"test","descriptors":[{"entries":[{"key":"tenant_id","value":"t_high_27"}]},{"entries":[{"key":"user_id","value":"u_high_27"}]}]},
+      {"domain":"test","descriptors":[{"entries":[{"key":"tenant_id","value":"t_high_28"}]},{"entries":[{"key":"user_id","value":"u_high_28"}]}]},
+      {"domain":"test","descriptors":[{"entries":[{"key":"tenant_id","value":"t_high_29"}]},{"entries":[{"key":"user_id","value":"u_high_29"}]}]},
+      {"domain":"test","descriptors":[{"entries":[{"key":"tenant_id","value":"t_high_30"}]},{"entries":[{"key":"user_id","value":"u_high_30"}]}]},
+      {"domain":"test","descriptors":[{"entries":[{"key":"tenant_id","value":"t_high_31"}]},{"entries":[{"key":"user_id","value":"u_high_31"}]}]},
+      {"domain":"test","descriptors":[{"entries":[{"key":"tenant_id","value":"t_high_32"}]},{"entries":[{"key":"user_id","value":"u_high_32"}]}]},
+      {"domain":"test","descriptors":[{"entries":[{"key":"tenant_id","value":"t_high_33"}]},{"entries":[{"key":"user_id","value":"u_high_33"}]}]},
+      {"domain":"test","descriptors":[{"entries":[{"key":"tenant_id","value":"t_high_34"}]},{"entries":[{"key":"user_id","value":"u_high_34"}]}]},
+      {"domain":"test","descriptors":[{"entries":[{"key":"tenant_id","value":"t_high_35"}]},{"entries":[{"key":"user_id","value":"u_high_35"}]}]},
+      {"domain":"test","descriptors":[{"entries":[{"key":"tenant_id","value":"t_high_36"}]},{"entries":[{"key":"user_id","value":"u_high_36"}]}]},
+      {"domain":"test","descriptors":[{"entries":[{"key":"tenant_id","value":"t_high_37"}]},{"entries":[{"key":"user_id","value":"u_high_37"}]}]},
+      {"domain":"test","descriptors":[{"entries":[{"key":"tenant_id","value":"t_high_38"}]},{"entries":[{"key":"user_id","value":"u_high_38"}]}]},
+      {"domain":"test","descriptors":[{"entries":[{"key":"tenant_id","value":"t_high_39"}]},{"entries":[{"key":"user_id","value":"u_high_39"}]}]},
+      {"domain":"test","descriptors":[{"entries":[{"key":"tenant_id","value":"SHARED_TENANT_A"}]},{"entries":[{"key":"user_id","value":"u_sh_A_0"}]}]},
+      {"domain":"test","descriptors":[{"entries":[{"key":"tenant_id","value":"SHARED_TENANT_A"}]},{"entries":[{"key":"user_id","value":"u_sh_A_1"}]}]},
+      {"domain":"test","descriptors":[{"entries":[{"key":"tenant_id","value":"SHARED_TENANT_A"}]},{"entries":[{"key":"user_id","value":"u_sh_A_2"}]}]},
+      {"domain":"test","descriptors":[{"entries":[{"key":"tenant_id","value":"SHARED_TENANT_B"}]},{"entries":[{"key":"user_id","value":"u_sh_B_0"}]}]},
+      {"domain":"test","descriptors":[{"entries":[{"key":"tenant_id","value":"SHARED_TENANT_B"}]},{"entries":[{"key":"user_id","value":"u_sh_B_1"}]}]},
+      {"domain":"test","descriptors":[{"entries":[{"key":"tenant_id","value":"SHARED_TENANT_C"}]},{"entries":[{"key":"user_id","value":"u_sh_C_0"}]}]},
+      {"domain":"test","descriptors":[{"entries":[{"key":"tenant_id","value":"SHARED_TENANT_C"}]},{"entries":[{"key":"user_id","value":"u_sh_C_1"}]}]},
+      {"domain":"test","descriptors":[{"entries":[{"key":"tenant_id","value":"SHARED_TENANT_C"}]},{"entries":[{"key":"user_id","value":"u_sh_C_2"}]}]},
+      {"domain":"test","descriptors":[{"entries":[{"key":"tenant_id","value":"SHARED_TENANT_D"}]},{"entries":[{"key":"user_id","value":"u_sh_D_0"}]}]},
+      {"domain":"test","descriptors":[{"entries":[{"key":"tenant_id","value":"SHARED_TENANT_D"}]},{"entries":[{"key":"user_id","value":"u_sh_D_1"}]}]}
+    ]
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: ghz-ratelimit-test
+  namespace: default
+spec:
+  template:
+    spec:
+      # Force scheduling on amd64 nodes so ghz image works
+      nodeSelector:
+        kubernetes.io/arch: amd64
+      containers:
+      - name: ghz
+        image: ghcr.io/bojand/ghz:latest
+        args:
+          - --insecure
+          - --proto=/proto/rls.proto
+          - --call=envoy.service.ratelimit.v3.RateLimitService/ShouldRateLimit
+          - --connections=100
+          - --concurrency=100
+          - --rps=4000
+          - --duration=600s
+          - --timeout=20ms
+          - --keepalive=1200s
+          - --skipFirst=1000
+          - --data-file=/data/scenarios.json
+          - envoy-ratelimit.envoy-ratelimit:8081
+        volumeMounts:
+        - name: proto
+          mountPath: /proto
+        - name: data
+          mountPath: /data
+      restartPolicy: Never
+      volumes:
+      - name: proto
+        configMap:
+          name: ghz-proto
+      - name: data
+        configMap:
+          name: ghz-scenarios
+  backoffLimit: 0
+
