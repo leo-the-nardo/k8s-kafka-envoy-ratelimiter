@@ -124,5 +124,8 @@ The project uses **AWS AppConfig** for dynamic configuration management, allowin
               memory: "1Gi"
 ```
 
+<img alt="image" src="https://github.com/user-attachments/assets/5ca9f701-f7fe-4d65-972c-7bdabfb4f705" />
+
+
 ## Acknowledgments
 - [envoyproxy/ratelimit](https://github.com/envoyproxy/ratelimit) - The rate limit service container used on this project.
