@@ -1,6 +1,6 @@
 # Using Envoy Distributed Ratelimiter as Kafka Middleware
-<img alt="kafka-envoy-ratelimit-architecture" src="https://github.com/user-attachments/assets/0b5753f8-032a-45c3-b7d1-ebf5791528b2" />
-
+This is the Kafka-Middleware version of [k8s-gateway-api-envoy-ratelimit](https://github.com/leo-the-nardo/k8s-gateway-api-envoy-ratelimit)
+<img alt="kafka-ratelimiter-sidecar" src="https://github.com/user-attachments/assets/f2c47d77-ae3d-4e0e-aa54-601382a9cc5c" />
 
 ## Rate Limiting Logic
 The core rate limiting logic resides in the `shouldRateLimit` function within `RateLimitClient.kt`. It utilizes **gRPC** to communicate with the Envoy Rate Limit Sidecar.
@@ -47,7 +47,7 @@ The `shouldRateLimit` function is used to validate requests against multiple des
 - **Fail-Open Policy**: The client implements a timeout. If the service is unreachable or times out, the system fails open.
 
 ## Deployment & Configuration
-- **Architecture**: The `ratelimit-service` is deployed as a **sidecar container** within the Kafka consumer pod.
+- **Architecture**: The `ratelimit-service` is deployed as a **standalone Deployment** within the Kubernetes cluster. The Kafka consumer communicates with it via **gRPC** using the Kubernetes Service DNS (e.g., `envoy-ratelimit.envoy-ratelimit.svc.cluster.local`).
 - **Configuration**: The `ratelimit-config` ConfigMap defines the rules.
 
 ```yaml
@@ -71,9 +71,6 @@ descriptors:
       requests_per_unit: 40
     shadow_mode: true
 ```
-
-> [!NOTE]
-> The rate limiting logic applies if **any** of the defined rules are met. For example, if a specific `user_id` exceeds 40 req/s, the request is blocked even if the `tenant_id` limit has not been reached, and vice-versa.
 
 ## Dependencies
 Key libraries used for Envoy integration and gRPC communication include:
@@ -120,7 +117,7 @@ The project uses **AWS AppConfig** for dynamic configuration management, allowin
 ```yaml
           resources:
             requests:
-              cpu: "1500m"
+              cpu: "500m"
               memory: "0.5Gi"
             limits:
               cpu: "1500m"
