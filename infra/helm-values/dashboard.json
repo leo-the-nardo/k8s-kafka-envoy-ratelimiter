@@ -1,0 +1,811 @@
+{
+    "title": "Rate Limit Service Dashboard",
+    "description": "Monitor rate limiting by descriptor",
+    "widgets": [
+        {
+            "id": 83391668808077,
+            "definition": {
+                "title": "Percentage of miss-allowed (by envoy metrics)",
+                "show_legend": true,
+                "legend_layout": "vertical",
+                "legend_columns": [
+                    "avg",
+                    "min",
+                    "max",
+                    "value",
+                    "sum"
+                ],
+                "type": "timeseries",
+                "requests": [
+                    {
+                        "formulas": [
+                            {
+                                "alias": "%",
+                                "formula": "clamp_min(100 * ((query1 - 6000) / ((query1 - 6000) + query2)), 0)"
+                            }
+                        ],
+                        "queries": [
+                            {
+                                "name": "query1",
+                                "data_source": "metrics",
+                                "query": "sum:ratelimit.service.rate_limit.within_limit{descriptor_key:gold_filter}.as_count()"
+                            },
+                            {
+                                "name": "query2",
+                                "data_source": "metrics",
+                                "query": "sum:ratelimit.service.rate_limit.over_limit{descriptor_key:gold_filter}.as_count()"
+                            }
+                        ],
+                        "response_format": "timeseries",
+                        "style": {
+                            "palette": "warm",
+                            "line_type": "solid",
+                            "line_width": "normal"
+                        },
+                        "display_type": "line"
+                    }
+                ],
+                "yaxis": {
+                    "include_zero": true,
+                    "scale": "linear",
+                    "label": "excess TPS"
+                },
+                "markers": [
+                    {
+                        "label": " 10% ",
+                        "value": "y = 10",
+                        "display_type": "error dashed"
+                    },
+                    {
+                        "label": " 1% ",
+                        "value": "y = 1",
+                        "display_type": "warning dashed"
+                    }
+                ]
+            },
+            "layout": {
+                "x": 0,
+                "y": 0,
+                "width": 6,
+                "height": 2
+            }
+        },
+        {
+            "id": 8364299308209483,
+            "definition": {
+                "title": "Percentage of miss-allowed (by kotlin metrics)",
+                "show_legend": true,
+                "legend_layout": "vertical",
+                "legend_columns": [
+                    "avg",
+                    "min",
+                    "max",
+                    "value",
+                    "sum"
+                ],
+                "type": "timeseries",
+                "requests": [
+                    {
+                        "formulas": [
+                            {
+                                "alias": "%",
+                                "formula": "clamp_min(100 * (query1 - 6000) / (query2 + (query1 - 6000)), 0)"
+                            }
+                        ],
+                        "queries": [
+                            {
+                                "name": "query1",
+                                "data_source": "metrics",
+                                "query": "sum:trace.netty.request.hits{http.status_code:200}.as_count()"
+                            },
+                            {
+                                "name": "query2",
+                                "data_source": "metrics",
+                                "query": "sum:trace.netty.request.hits{http.status_code:429}.as_count()"
+                            }
+                        ],
+                        "response_format": "timeseries",
+                        "style": {
+                            "palette": "warm",
+                            "line_type": "solid",
+                            "line_width": "normal"
+                        },
+                        "display_type": "line"
+                    }
+                ],
+                "yaxis": {
+                    "include_zero": true,
+                    "scale": "linear",
+                    "label": "excess TPS"
+                },
+                "markers": [
+                    {
+                        "label": " 10% ",
+                        "value": "y = 10",
+                        "display_type": "error dashed"
+                    },
+                    {
+                        "label": " 1% ",
+                        "value": "y = 1",
+                        "display_type": "warning dashed"
+                    }
+                ]
+            },
+            "layout": {
+                "x": 6,
+                "y": 0,
+                "width": 6,
+                "height": 2
+            }
+        },
+        {
+            "id": 1,
+            "definition": {
+                "title": "Miss Allowed TPS by Descriptor",
+                "show_legend": true,
+                "legend_layout": "vertical",
+                "legend_columns": [
+                    "avg",
+                    "min",
+                    "max",
+                    "value",
+                    "sum"
+                ],
+                "type": "timeseries",
+                "requests": [
+                    {
+                        "formulas": [
+                            {
+                                "alias": "Excess TPS",
+                                "formula": "clamp_min(query1 - 60, 0)"
+                            }
+                        ],
+                        "queries": [
+                            {
+                                "name": "query1",
+                                "data_source": "metrics",
+                                "query": "sum:ratelimit.service.rate_limit.within_limit{cluster:dev-eks-cluster} by {descriptor_value,descriptor_key}.as_rate()"
+                            }
+                        ],
+                        "response_format": "timeseries",
+                        "style": {
+                            "palette": "warm",
+                            "line_type": "solid",
+                            "line_width": "normal"
+                        },
+                        "display_type": "line"
+                    }
+                ],
+                "yaxis": {
+                    "include_zero": true,
+                    "scale": "linear",
+                    "label": "excess TPS"
+                }
+            },
+            "layout": {
+                "x": 0,
+                "y": 2,
+                "width": 6,
+                "height": 4
+            }
+        },
+        {
+            "id": 985215767114941,
+            "definition": {
+                "title": "Total Miss-Allowed Requests on kotlin backend (10 users at 300req/s) - On 10 sec window",
+                "show_legend": true,
+                "legend_layout": "vertical",
+                "legend_columns": [
+                    "avg",
+                    "min",
+                    "max",
+                    "value",
+                    "sum"
+                ],
+                "type": "timeseries",
+                "requests": [
+                    {
+                        "formulas": [
+                            {
+                                "alias": "Excess Requests",
+                                "formula": "clamp_min(query1 - 6000, -30)"
+                            }
+                        ],
+                        "queries": [
+                            {
+                                "name": "query1",
+                                "data_source": "metrics",
+                                "query": "sum:trace.netty.request.hits{http.status_code:200}.as_count()"
+                            }
+                        ],
+                        "response_format": "timeseries",
+                        "style": {
+                            "palette": "warm",
+                            "line_type": "solid",
+                            "line_width": "normal"
+                        },
+                        "display_type": "bars"
+                    }
+                ],
+                "yaxis": {
+                    "include_zero": true,
+                    "scale": "linear",
+                    "label": "excess TPS"
+                }
+            },
+            "layout": {
+                "x": 6,
+                "y": 2,
+                "width": 6,
+                "height": 4
+            }
+        },
+        {
+            "id": 3,
+            "definition": {
+                "title": "Allowed TPS by Descriptor (Threshold 40 TPS)",
+                "show_legend": true,
+                "legend_layout": "vertical",
+                "legend_columns": [
+                    "avg",
+                    "min",
+                    "max",
+                    "value",
+                    "sum"
+                ],
+                "type": "timeseries",
+                "requests": [
+                    {
+                        "formulas": [
+                            {
+                                "alias": "Allowed TPS",
+                                "formula": "query1"
+                            }
+                        ],
+                        "queries": [
+                            {
+                                "name": "query1",
+                                "data_source": "metrics",
+                                "query": "sum:ratelimit.service.rate_limit.within_limit{cluster:dev-eks-cluster} by {descriptor_value,descriptor_key}.as_rate()"
+                            }
+                        ],
+                        "response_format": "timeseries",
+                        "style": {
+                            "palette": "green",
+                            "line_type": "solid",
+                            "line_width": "normal"
+                        },
+                        "display_type": "line"
+                    }
+                ],
+                "yaxis": {
+                    "include_zero": true,
+                    "scale": "linear",
+                    "label": "TPS"
+                },
+                "markers": [
+                    {
+                        "label": " Limit Rule ",
+                        "value": "y = 60",
+                        "display_type": "error dashed"
+                    }
+                ]
+            },
+            "layout": {
+                "x": 0,
+                "y": 6,
+                "width": 6,
+                "height": 4
+            }
+        },
+        {
+            "id": 2,
+            "definition": {
+                "title": "Rate Limited % by Descriptor (Threshold 80%)",
+                "show_legend": true,
+                "legend_layout": "vertical",
+                "legend_columns": [
+                    "avg",
+                    "min",
+                    "max",
+                    "value",
+                    "sum"
+                ],
+                "type": "timeseries",
+                "requests": [
+                    {
+                        "formulas": [
+                            {
+                                "alias": "Rate Limited %",
+                                "formula": "(query1 / (query2 + 0.001)) * 100"
+                            }
+                        ],
+                        "queries": [
+                            {
+                                "name": "query1",
+                                "data_source": "metrics",
+                                "query": "sum:ratelimit.service.rate_limit.over_limit{cluster:dev-eks-cluster} by {descriptor_value,descriptor_key}.as_count()"
+                            },
+                            {
+                                "name": "query2",
+                                "data_source": "metrics",
+                                "query": "sum:ratelimit.service.rate_limit.total_hits{cluster:dev-eks-cluster} by {descriptor_value,descriptor_key}.as_count()"
+                            }
+                        ],
+                        "response_format": "timeseries",
+                        "style": {
+                            "palette": "orange",
+                            "line_type": "solid",
+                            "line_width": "normal"
+                        },
+                        "display_type": "line"
+                    }
+                ],
+                "yaxis": {
+                    "include_zero": true,
+                    "scale": "linear",
+                    "label": "%",
+                    "max": "100"
+                },
+                "markers": [
+                    {
+                        "label": "80% threshold",
+                        "value": "y = 80",
+                        "display_type": "error dashed"
+                    }
+                ]
+            },
+            "layout": {
+                "x": 6,
+                "y": 6,
+                "width": 6,
+                "height": 4
+            }
+        },
+        {
+            "id": 2423314989534759,
+            "definition": {
+                "title": "Composition latenccy by traces and metrtic - p99",
+                "title_size": "16",
+                "title_align": "left",
+                "show_legend": true,
+                "legend_layout": "horizontal",
+                "legend_columns": [
+                    "avg",
+                    "min",
+                    "max",
+                    "value",
+                    "sum"
+                ],
+                "type": "timeseries",
+                "requests": [
+                    {
+                        "response_format": "timeseries",
+                        "queries": [
+                            {
+                                "data_source": "metrics",
+                                "name": "query2",
+                                "query": "avg:ratelimit_server.ShouldRateLimit.response_time.99percentile{*}"
+                            },
+                            {
+                                "data_source": "apm_metrics",
+                                "name": "query3",
+                                "stat": "latency_p99",
+                                "service": "kt-backend",
+                                "group_by": []
+                            },
+                            {
+                                "data_source": "apm_metrics",
+                                "name": "query1",
+                                "stat": "latency_p99",
+                                "service": "envoy-ratelimit",
+                                "group_by": []
+                            }
+                        ],
+                        "formulas": [
+                            {
+                                "alias": "envoy latency by metric",
+                                "formula": "query2"
+                            },
+                            {
+                                "alias": "envoy latency by trace",
+                                "formula": "query1 * 1000"
+                            },
+                            {
+                                "alias": "kotlin latency by trace",
+                                "formula": "query3 * 1000"
+                            }
+                        ],
+                        "style": {
+                            "palette": "dog_classic",
+                            "order_by": "values",
+                            "line_type": "solid",
+                            "line_width": "normal"
+                        },
+                        "display_type": "line"
+                    }
+                ]
+            },
+            "layout": {
+                "x": 0,
+                "y": 10,
+                "width": 6,
+                "height": 2
+            }
+        },
+        {
+            "id": 3690217264184120,
+            "definition": {
+                "title": "",
+                "title_size": "16",
+                "title_align": "left",
+                "show_legend": true,
+                "legend_layout": "horizontal",
+                "legend_columns": [
+                    "avg",
+                    "min",
+                    "max",
+                    "value",
+                    "sum"
+                ],
+                "type": "timeseries",
+                "requests": [
+                    {
+                        "response_format": "timeseries",
+                        "queries": [
+                            {
+                                "data_source": "apm_metrics",
+                                "name": "query1",
+                                "stat": "hits_per_second",
+                                "service": "kt-backend",
+                                "group_by": [
+                                    "http.status_code"
+                                ]
+                            }
+                        ],
+                        "formulas": [
+                            {
+                                "formula": "query1"
+                            }
+                        ],
+                        "style": {
+                            "palette": "semantic",
+                            "order_by": "values",
+                            "line_type": "solid",
+                            "line_width": "normal"
+                        },
+                        "display_type": "line"
+                    }
+                ]
+            },
+            "layout": {
+                "x": 6,
+                "y": 10,
+                "width": 6,
+                "height": 2
+            }
+        },
+        {
+            "id": 1710742743415079,
+            "definition": {
+                "title": "Composition latency - avg",
+                "title_size": "16",
+                "title_align": "left",
+                "show_legend": true,
+                "legend_layout": "horizontal",
+                "legend_columns": [
+                    "avg",
+                    "min",
+                    "max",
+                    "value",
+                    "sum"
+                ],
+                "type": "timeseries",
+                "requests": [
+                    {
+                        "response_format": "timeseries",
+                        "queries": [
+                            {
+                                "data_source": "metrics",
+                                "name": "query2",
+                                "query": "avg:ratelimit_server.ShouldRateLimit.response_time.avg{*}"
+                            },
+                            {
+                                "data_source": "apm_metrics",
+                                "name": "query1",
+                                "stat": "latency_avg",
+                                "service": "envoy-ratelimit",
+                                "group_by": []
+                            },
+                            {
+                                "data_source": "apm_metrics",
+                                "name": "query3",
+                                "stat": "latency_avg",
+                                "service": "kt-backend",
+                                "group_by": []
+                            }
+                        ],
+                        "formulas": [
+                            {
+                                "alias": "envoy latency by metric",
+                                "formula": "query2"
+                            },
+                            {
+                                "alias": "envoy latency by trace",
+                                "formula": "query1 * 1000"
+                            },
+                            {
+                                "alias": "kotlin latency by trace",
+                                "formula": "query3 * 1000"
+                            }
+                        ],
+                        "style": {
+                            "palette": "dog_classic",
+                            "order_by": "values",
+                            "line_type": "solid",
+                            "line_width": "normal"
+                        },
+                        "display_type": "line"
+                    }
+                ]
+            },
+            "layout": {
+                "x": 0,
+                "y": 12,
+                "width": 6,
+                "height": 2
+            }
+        },
+        {
+            "id": 4,
+            "definition": {
+                "title": "Rate Limited TPS by Descriptor",
+                "show_legend": true,
+                "legend_layout": "vertical",
+                "legend_columns": [
+                    "avg",
+                    "min",
+                    "max",
+                    "value",
+                    "sum"
+                ],
+                "type": "timeseries",
+                "requests": [
+                    {
+                        "formulas": [
+                            {
+                                "alias": "Refused TPS",
+                                "formula": "query1"
+                            }
+                        ],
+                        "queries": [
+                            {
+                                "name": "query1",
+                                "data_source": "metrics",
+                                "query": "sum:ratelimit.service.rate_limit.over_limit{cluster:dev-eks-cluster} by {descriptor_value,descriptor_key}.as_rate()"
+                            }
+                        ],
+                        "response_format": "timeseries",
+                        "style": {
+                            "palette": "warm",
+                            "line_type": "solid",
+                            "line_width": "normal"
+                        },
+                        "display_type": "line"
+                    }
+                ],
+                "yaxis": {
+                    "include_zero": true,
+                    "scale": "linear",
+                    "label": "TPS"
+                }
+            },
+            "layout": {
+                "x": 6,
+                "y": 12,
+                "width": 6,
+                "height": 2
+            }
+        },
+        {
+            "id": 4752767580870012,
+            "definition": {
+                "title": "CPU utilization vs request",
+                "title_size": "16",
+                "title_align": "left",
+                "show_legend": true,
+                "legend_layout": "auto",
+                "legend_columns": [
+                    "avg",
+                    "min",
+                    "max",
+                    "value",
+                    "sum"
+                ],
+                "type": "timeseries",
+                "requests": [
+                    {
+                        "formulas": [
+                            {
+                                "alias": "% CPU requests",
+                                "formula": "query7 / (query1 * 1000000000) * 100"
+                            }
+                        ],
+                        "queries": [
+                            {
+                                "query": "sum:kubernetes.cpu.usage.total{kube_deployment:kt-backend} by {container_name}",
+                                "data_source": "metrics",
+                                "name": "query7"
+                            },
+                            {
+                                "query": "sum:kubernetes.cpu.requests{kube_deployment:kt-backend} by {container_name}",
+                                "data_source": "metrics",
+                                "name": "query1"
+                            },
+                            {
+                                "query": "sum:kubernetes.memory.requests{kube_deployment:kt-backend} by {container_name}",
+                                "data_source": "metrics",
+                                "name": "query5"
+                            },
+                            {
+                                "query": "sum:kubernetes.memory.usage{kube_deployment:kt-backend} by {container_name}",
+                                "data_source": "metrics",
+                                "name": "query8"
+                            },
+                            {
+                                "query": "sum:kubernetes.cpu.limits{kube_deployment:kt-backend} by {container_name}",
+                                "data_source": "metrics",
+                                "name": "query2"
+                            },
+                            {
+                                "query": "sum:kubernetes.memory.limits{kube_deployment:kt-backend} by {container_name}",
+                                "data_source": "metrics",
+                                "name": "query6"
+                            }
+                        ],
+                        "response_format": "timeseries",
+                        "style": {
+                            "palette": "dog_classic",
+                            "line_type": "solid",
+                            "line_width": "normal"
+                        },
+                        "display_type": "line"
+                    }
+                ],
+                "yaxis": {
+                    "scale": "sqrt",
+                    "include_zero": false,
+                    "max": "120"
+                },
+                "markers": [
+                    {
+                        "value": "y < 60",
+                        "display_type": "error dashed"
+                    },
+                    {
+                        "value": "y < 80",
+                        "display_type": "warning dashed"
+                    }
+                ]
+            },
+            "layout": {
+                "x": 0,
+                "y": 14,
+                "width": 6,
+                "height": 3
+            }
+        },
+        {
+            "id": 6642495274998262,
+            "definition": {
+                "title": "CPU utilization vs request",
+                "title_size": "16",
+                "title_align": "left",
+                "show_legend": true,
+                "legend_layout": "auto",
+                "legend_columns": [
+                    "avg",
+                    "min",
+                    "max",
+                    "value",
+                    "sum"
+                ],
+                "type": "timeseries",
+                "requests": [
+                    {
+                        "formulas": [
+                            {
+                                "alias": "% CPU requests",
+                                "formula": "query7 / (query1 * 1000000000) * 100"
+                            }
+                        ],
+                        "queries": [
+                            {
+                                "query": "sum:kubernetes.cpu.usage.total{kube_deployment:envoy-ratelimit} by {container_name}",
+                                "data_source": "metrics",
+                                "name": "query7"
+                            },
+                            {
+                                "query": "sum:kubernetes.cpu.requests{kube_deployment:envoy-ratelimit} by {container_name}",
+                                "data_source": "metrics",
+                                "name": "query1"
+                            },
+                            {
+                                "query": "sum:kubernetes.memory.requests{kube_deployment:envoy-ratelimit} by {container_name}",
+                                "data_source": "metrics",
+                                "name": "query5"
+                            },
+                            {
+                                "query": "sum:kubernetes.memory.usage{kube_deployment:envoy-ratelimit} by {container_name}",
+                                "data_source": "metrics",
+                                "name": "query8"
+                            },
+                            {
+                                "query": "sum:kubernetes.cpu.limits{kube_deployment:envoy-ratelimit} by {container_name}",
+                                "data_source": "metrics",
+                                "name": "query2"
+                            },
+                            {
+                                "query": "sum:kubernetes.memory.limits{kube_deployment:envoy-ratelimit} by {container_name}",
+                                "data_source": "metrics",
+                                "name": "query6"
+                            }
+                        ],
+                        "response_format": "timeseries",
+                        "style": {
+                            "palette": "dog_classic",
+                            "line_type": "solid",
+                            "line_width": "normal"
+                        },
+                        "display_type": "line"
+                    }
+                ],
+                "yaxis": {
+                    "scale": "sqrt",
+                    "include_zero": false,
+                    "max": "120"
+                },
+                "markers": [
+                    {
+                        "value": "y < 60",
+                        "display_type": "error dashed"
+                    },
+                    {
+                        "value": "y < 80",
+                        "display_type": "warning dashed"
+                    }
+                ]
+            },
+            "layout": {
+                "x": 6,
+                "y": 14,
+                "width": 6,
+                "height": 3
+            }
+        }
+    ],
+    "template_variables": [
+        {
+            "name": "cluster",
+            "prefix": "cluster",
+            "available_values": [],
+            "default": "dev-eks-cluster"
+        },
+        {
+            "name": "descriptor_key",
+            "prefix": "descriptor_key",
+            "available_values": [],
+            "default": "*"
+        },
+        {
+            "name": "descriptor_value",
+            "prefix": "descriptor_value",
+            "available_values": [],
+            "default": "*"
+        }
+    ],
+    "layout_type": "ordered",
+    "notify_list": [],
+    "reflow_type": "fixed",
+    "pause_auto_refresh": false
+}
